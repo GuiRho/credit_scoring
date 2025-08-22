@@ -11,7 +11,7 @@ from evidently.legacy.pipeline.column_mapping import ColumnMapping
 warnings.filterwarnings("ignore")
 
 # --- Configuration ---
-MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
+MLFLOW_TRACKING_URI = "http://mlflow:5000"
 REGISTERED_MODEL_NAME = "CreditScoringRF"
 ARTIFACTS_DIR = "C:/Users/gui/Documents/OpenClassrooms/Projet 7/mlflow_artifact"
 EVIDENTLY_REPORT_PATH = os.path.join(ARTIFACTS_DIR, "data_drift_report.html")

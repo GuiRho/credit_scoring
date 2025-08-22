@@ -18,18 +18,15 @@ services:
       retries: 5
     networks:
       - gtrack-network
+    restart: always
 
   model-api:
     build: ./serve_model
     ports:
       - "8000:8000"
-    environment:
-      - MLFLOW_TRACKING_URI=http://mlflow:5000
-    depends_on:
-      mlflow:
-        condition: service_healthy
     networks:
       - gtrack-network
+    restart: always
 
   streamlit-app:
     build: ./UX
@@ -37,25 +34,12 @@ services:
       - "8501:8501"
     environment:
       - API_URL=http://model-api:8000/predict
-      - MLFLOW_TRACKING_URI=http://mlflow:5000
     depends_on:
       model-api:
         condition: service_started
     networks:
       - gtrack-network
-
-  ai-input-1:
-    build: ./ai_input_1
-    environment:
-      - MLFLOW_TRACKING_URI=http://mlflow:5000
-    depends_on:
-      mlflow:
-        condition: service_healthy
-    networks:
-      - gtrack-network
-    volumes:
-      - C:/Users/gui/Documents/OpenClassrooms/Projet 7/Enonce/:/app/data_source
-    command: python ai_input_1.py
+    restart: always
 
 networks:
   gtrack-network:
