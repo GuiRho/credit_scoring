@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.log
+
+# MLflow
+mlruns/
+mlflow_artifact/
+
+# Docker
+*.dockerignore
+
+# IDE and OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Data
+*.parquet

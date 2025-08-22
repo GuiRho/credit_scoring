@@ -1,0 +1,6 @@
+mlflow
+pandas
+fastapi
+pydantic
+uvicorn
+numpy
