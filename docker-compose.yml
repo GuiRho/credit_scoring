@@ -17,7 +17,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - gtrack-network
+      - credit_scoring-network
     restart: always
 
   model-api:
@@ -25,7 +25,14 @@ services:
     ports:
       - "8000:8000"
     networks:
-      - gtrack-network
+      - credit_scoring-network
+    volumes:
+      - ./model_artifacts:/app/model_artifacts   # <-- mount the pre-trained model here
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests, sys; r = requests.get('http://localhost:8000/health'); sys.exit(0 if r.status_code==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: always
 
   streamlit-app:
@@ -36,11 +43,11 @@ services:
       - API_URL=http://model-api:8000/predict
     depends_on:
       model-api:
-        condition: service_started
+        condition: service_healthy
     networks:
-      - gtrack-network
+      - credit_scoring-network
     restart: always
 
 networks:
-  gtrack-network:
+  credit_scoring-network:
     driver: bridge

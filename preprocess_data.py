@@ -617,20 +617,18 @@ def main(data_path, debug=False):
 
     return df_final
 
+# This file has been replaced by a thin wrapper. Heavy raw CSV preprocessing is now in:
+#   preprocessing/raw_preprocessing.py
+# Processing of the immutable df_global.parquet is in:
+#   processing/process_df_global.py
+# Run either script directly:
+#   python -m preprocessing.raw_preprocessing --raw-path "<raw csv folder>" --output "<df_global.parquet>"
+#   python -m processing.process_df_global --input "<df_global.parquet>" --output "<processed.parquet>"
 if __name__ == "__main__":
-    # Define the path to your raw data files
-    data_folder_path = "C:/Users/gui/Documents/OpenClassrooms/Projet 7/Enonce/"
-
-    with timer("Full data ingestion, feature engineering, cleaning and imputation run"):
-        df_global = main(data_folder_path, debug=False)
-        print("\n--- Data Preprocessing Complete ---")
-        print("Final global DataFrame 'df_global' created.")
-        print("Shape of df_global:", df_global.shape)
-        # Display memory usage for verification
-        mem_usage = df_global.memory_usage().sum() / 1024**2
-        print(f"Memory usage of df_global: {mem_usage:.2f} MB")
-        
-        # Save the processed dataframe to a parquet file
-        output_path = "c:\\Users\\gui\\Documents\\credit_scoring\\df_global.parquet"
-        df_global.to_parquet(output_path, engine='pyarrow')
-        print(f"Processed DataFrame saved to {output_path}")
+    import sys
+    print("This repository now separates raw preprocessing and df_global processing.")
+    print("See preprocessing/raw_preprocessing.py and processing/process_df_global.py")
+    print("Examples:")
+    print("  python -m preprocessing.raw_preprocessing --raw-path \"C:/.../Enonce\" --output \"C:/.../df/df_global.parquet\"")
+    print("  python -m processing.process_df_global --input \"C:/.../df/df_global.parquet\" --output \"./df_final.parquet\"")
+    sys.exit(0)

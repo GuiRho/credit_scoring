@@ -1,1 +1,0 @@
-I cannot find the file containing the setting `"geminicodeassist.agentYoloMode": false,` within the project directory. Please provide the full absolute path to the file you wish to modify.
