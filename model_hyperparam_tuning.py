@@ -1,7 +1,3 @@
-# --------------------
-# model_hyperparam_tuning.py
-
-
 import os
 from pathlib import Path
 import json
@@ -11,7 +7,6 @@ import numpy as np
 import pandas as pd
 import mlflow
 import optuna
-
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import StratifiedKFold
@@ -21,23 +16,21 @@ from sklearn.metrics import recall_score, confusion_matrix
 
 # optional backends
 try:
-    from xgboost import XGBClassifier  # type: ignore
+    from xgboost import XGBClassifier
     XGB_AVAILABLE = True
-except Exception:
+except ImportError:
     XGB_AVAILABLE = False
 
 try:
-    import lightgbm as lgb  # type: ignore
+    import lightgbm as lgb
     LGB_AVAILABLE = True
-except Exception:
+except ImportError:
     LGB_AVAILABLE = False
-
 
 def ensure_dir(fp):
     d = os.path.dirname(fp) or "."
     os.makedirs(d, exist_ok=True)
     return fp
-
 
 def make_pipeline_for(name, params, random_state):
     if name == "logreg":
@@ -51,11 +44,9 @@ def make_pipeline_for(name, params, random_state):
         pipe = Pipeline([("scaler", StandardScaler()), ("clf", XGBClassifier(random_state=random_state, use_label_encoder=False, eval_metric="logloss", **params))])
         return pipe
     if name == "lightgbm" and LGB_AVAILABLE:
-        # note: lgb.LGBMClassifier accepts similar params
         pipe = Pipeline([("scaler", StandardScaler()), ("clf", lgb.LGBMClassifier(random_state=random_state, **params))])
         return pipe
     raise ValueError(f"Unsupported model or missing dependency: {name}")
-
 
 def _compute_custom_and_normalized(y_true, y_pred_bin, pos_proportion):
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred_bin).ravel()
@@ -64,7 +55,6 @@ def _compute_custom_and_normalized(y_true, y_pred_bin, pos_proportion):
     pos_prop = max(pos_proportion, 1e-9)
     normalized = custom * (1.0 / max(1, n)) * (1.0 / pos_prop)
     return float(custom), float(normalized)
-
 
 def _best_threshold_max_recall(y_true, y_pred_proba):
     thresholds = np.linspace(0.01, 0.99, 99)
@@ -77,30 +67,33 @@ def _best_threshold_max_recall(y_true, y_pred_proba):
             best_t = t
     return best_t, best_recall
 
-
 def validate_tune_inputs(path_parquet: str, model_name: str, n_trials: int, cache_dir: str):
     errs = []
-    if not path_parquet or not os.path.exists(path_parquet):
+    if path_parquet and not os.path.exists(path_parquet):
         errs.append(f"input parquet not found: {path_parquet}")
     if n_trials is None or n_trials <= 0:
         errs.append(f"trials must be > 0, got: {n_trials}")
+        
     allowed = {"random_forest", "logreg"}
     if XGB_AVAILABLE:
         allowed.add("xgboost")
     if LGB_AVAILABLE:
         allowed.add("lightgbm")
+        
     if model_name not in allowed:
         errs.append(f"model_name '{model_name}' not supported by installed backends. Allowed: {sorted(allowed)}")
+        
     try:
         os.makedirs(cache_dir, exist_ok=True)
     except Exception as e:
         errs.append(f"cache_dir not creatable: {cache_dir} -> {e}")
+        
     if errs:
         msg = "tune_model input validation failed:\n  " + "\n  ".join(errs)
         print(f"[tune_model][VALIDATION] {msg}")
         raise ValueError(msg)
+        
     print(f"[tune_model][VALIDATION] OK: parquet={path_parquet}, model={model_name}, trials={n_trials}, cache={cache_dir}")
-
 
 def _load_df(df_or_path):
     if isinstance(df_or_path, pd.DataFrame):
@@ -128,10 +121,12 @@ def ensure_mlflow_from_env(cache_dir: str):
     return mlflow.get_tracking_uri()
 
 def tune_model(df_or_path: str, model_name: str, target_col: str = "TARGET",
-               n_trials: int = 50, random_state: int = 42, cache_dir: str = r"C:\Users\gui\Documents\OpenClassrooms\Projet 7\cache",
-               persist_parquet: bool = False):
-    validate_tune_inputs(df_or_path if not isinstance(df_or_path, pd.DataFrame) else None, model_name, n_trials, cache_dir)
+               n_trials: int = 50, random_state: int = 42, cache_dir: str = r"C:\Users\gui\Documents\OpenClassrooms\Projet 7\cache"):
+    
+    path_parquet = df_or_path if not isinstance(df_or_path, pd.DataFrame) else None
+    validate_tune_inputs(path_parquet, model_name, n_trials, cache_dir)
     df = _load_df(df_or_path)
+    
     if target_col not in df.columns:
         raise ValueError(f"Target column '{target_col}' not found in dataframe")
 
@@ -172,7 +167,7 @@ def tune_model(df_or_path: str, model_name: str, target_col: str = "TARGET",
         return mean_custom
 
     def objective_logreg(trial):
-        C = trial.suggest_loguniform("C", 1e-4, 1e2)
+        C = trial.suggest_float("C", 1e-4, 1e2, log=True)
         params = {"C": C}
         pipe = make_pipeline_for("logreg", params, random_state)
         mean_custom, _ = _cv_custom_score(pipe)
@@ -182,7 +177,7 @@ def tune_model(df_or_path: str, model_name: str, target_col: str = "TARGET",
         params = {
             "n_estimators": trial.suggest_int("n_estimators", 50, 500),
             "max_depth": trial.suggest_int("max_depth", 3, 12),
-            "learning_rate": trial.suggest_loguniform("learning_rate", 1e-3, 0.3),
+            "learning_rate": trial.suggest_float("learning_rate", 1e-3, 0.3, log=True),
             "subsample": trial.suggest_float("subsample", 0.5, 1.0),
             "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
         }
@@ -194,7 +189,7 @@ def tune_model(df_or_path: str, model_name: str, target_col: str = "TARGET",
         params = {
             "n_estimators": trial.suggest_int("n_estimators", 50, 500),
             "num_leaves": trial.suggest_int("num_leaves", 16, 256),
-            "learning_rate": trial.suggest_loguniform("learning_rate", 1e-3, 0.3),
+            "learning_rate": trial.suggest_float("learning_rate", 1e-3, 0.3, log=True),
             "subsample": trial.suggest_float("subsample", 0.5, 1.0),
             "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
         }
@@ -230,14 +225,14 @@ def tune_model(df_or_path: str, model_name: str, target_col: str = "TARGET",
 
     # Log to MLflow (store mlruns under cache_dir)
     os.makedirs(cache_dir, exist_ok=True)
-    try:
-        mlflow.set_tracking_uri(f"file://{os.path.join(os.path.abspath(cache_dir), 'mlruns')}")
-    except Exception:
-        pass
+    ensure_mlflow_from_env(cache_dir)
     mlflow.set_experiment("credit_scoring_hyperparam_tuning")
-    run_name = f"tune_{model_name}_{Path(path_parquet).stem}"
+    
+    run_name_stem = Path(path_parquet).stem if path_parquet else "df_in_memory"
+    run_name = f"tune_{model_name}_{run_name_stem}"
+    
     with mlflow.start_run(run_name=run_name):
-        mlflow.log_param("input_parquet", path_parquet)
+        mlflow.log_param("input_parquet", path_parquet or "N/A")
         mlflow.log_param("model_name", model_name)
         mlflow.log_param("n_trials", n_trials)
         mlflow.log_params(best_params)
@@ -246,7 +241,7 @@ def tune_model(df_or_path: str, model_name: str, target_col: str = "TARGET",
         mlflow.log_metric("final_normalized_custom", float(final_normalized))
         mlflow.log_metric("final_best_threshold", float(best_t_full))
         mlflow.log_param("pos_proportion", float(pos_prop_global))
-        model_fp = os.path.join(cache_dir, f"tuned_{model_name}_{Path(path_parquet).stem}.joblib")
+        model_fp = os.path.join(cache_dir, f"tuned_{model_name}_{run_name_stem}.joblib")
         ensure_dir(model_fp)
         joblib.dump(final_pipe, model_fp)
         mlflow.log_artifact(model_fp, artifact_path="models")
@@ -257,7 +252,6 @@ def tune_model(df_or_path: str, model_name: str, target_col: str = "TARGET",
         pass
 
     return study, final_pipe
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

@@ -9,12 +9,85 @@ import pandas as pd
 import joblib
 from sklearn.ensemble import RandomForestClassifier
 import mlflow
-from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
 
 # -------------------
 # Existing helper functions (unchanged)
 # -------------------
 
+def clean_and_impute_data(df, target_col='TARGET', completeness=85, impute='median', verbose=True, variance_threshold: float = 0.0):
+    df_processed = df.copy()
+    initial_cols = df_processed.shape[1]
+    initial_rows = df_processed.shape[0]
+    col_completeness = (1 - df_processed.isnull().sum() / len(df_processed)) * 100
+    cols_to_drop_completeness = col_completeness[col_completeness < completeness].index.tolist()
+    if cols_to_drop_completeness:
+        df_processed.drop(columns=cols_to_drop_completeness, inplace=True)
+        if verbose:
+            print(f"Dropped {len(cols_to_drop_completeness)} columns due to completeness < {completeness}%")
+            
+    row_completeness = (1 - df_processed.isnull().sum(axis=1) / df_processed.shape[1]) * 100
+    rows_to_drop_completeness = df_processed[row_completeness < completeness*0.5].index.tolist()
+    if rows_to_drop_completeness:
+        df_processed.drop(index=rows_to_drop_completeness, inplace=True)
+        if verbose:
+            print(f"Dropped {len(rows_to_drop_completeness)} rows due to completeness < {completeness*0.5}%")
+            
+    numerical_cols = df_processed.select_dtypes(include=np.number).columns.tolist()
+    if impute == 'median':
+        impute_value = df_processed[numerical_cols].median()
+    elif impute == 'mean':
+        impute_value = df_processed[numerical_cols].mean()
+    elif impute == 'zero':
+        impute_value = 0
+    else:
+        raise ValueError(f"Unknown impute method: {impute}")
+        
+    df_processed[numerical_cols] = df_processed[numerical_cols].fillna(impute_value)
+    
+    # apply low-variance filter on numerical columns (after imputation)
+    if variance_threshold is not None and variance_threshold > 0:
+        numerical_cols_after = df_processed.select_dtypes(include=np.number).columns.tolist()
+        if numerical_cols_after:
+            variances = df_processed[numerical_cols_after].var()
+            cols_to_drop_variance = variances[variances <= variance_threshold].index.tolist()
+            if cols_to_drop_variance:
+                df_processed.drop(columns=cols_to_drop_variance, inplace=True)
+                if verbose:
+                    print(f"Dropped {len(cols_to_drop_variance)} numerical columns with variance <= {variance_threshold}")
+                    
+    if target_col in df_processed.columns:
+        df_processed.dropna(subset=[target_col], inplace=True)
+        df_processed[target_col] = df_processed[target_col].astype(int)
+        
+    if verbose:
+        print(f"Original shape: ({initial_rows}, {initial_cols})")
+        print(f"Processed shape: {df_processed.shape}")
+        
+    return df_processed
+
+def remove_percent_outliers_2sides(df, percent):
+    df_cleaned = df.copy()
+    for feat in df_cleaned.columns:
+        df_cleaned[feat] = pd.to_numeric(df_cleaned[feat], errors='coerce')
+    df_cleaned = df_cleaned.dropna()
+    
+    if df_cleaned.empty:
+        return df_cleaned
+        
+    all_outlier_indices = []
+    lower_quantile = percent / 100
+    upper_quantile = (100 - percent) / 100
+    
+    for feat in df_cleaned.select_dtypes(include=[np.number]).columns:
+        lower_val = df_cleaned[feat].quantile(lower_quantile)
+        upper_val = df_cleaned[feat].quantile(upper_quantile)
+        outlier_rows = df_cleaned[(df_cleaned[feat] < lower_val) | (df_cleaned[feat] > upper_val)]
+        all_outlier_indices.extend(outlier_rows.index.tolist())
+        
+    all_outlier_indices = list(set(all_outlier_indices))
+    print(f"Number of total outliers = {len(all_outlier_indices)}")
+    df_cleaned = df_cleaned.drop(index=all_outlier_indices)
+    return df_cleaned
 
 def ensure_mlflow_from_env(cache_dir: str):
     """
@@ -43,6 +116,9 @@ class FeatureEngineeringPipeline:
         self.n_create = max(2, int(np.sqrt(n_select)))
         self.cor_val = cor_val
         self.target_col = target_col
+        self.importance_df = None
+        self.feng_importance_df = None
+        self.combined_importance_df = None
         self.cache_dir = cache_dir or os.path.join(os.getcwd(), "cache")
         os.makedirs(self.cache_dir, exist_ok=True)
 
@@ -61,12 +137,144 @@ class FeatureEngineeringPipeline:
                 df[col] = df[col].astype(int)
         return df
 
+    def _calcul_feature_importance(self, df, cache_key):
+        if df.empty or df.shape[1] <= 1:
+            return pd.DataFrame(columns=['feature', 'metric1_spearman', 'metric2_mdi', 'metric3_product'])
+            
+        cache_file = os.path.join(self.cache_dir, f"importance_{cache_key}.pkl")
+        if os.path.exists(cache_file):
+            cached_df = joblib.load(cache_file)
+            current_features = set(df.drop(columns=[self.target_col], errors='ignore').columns)
+            cached_features = set(cached_df['feature'])
+            if current_features == cached_features:
+                return cached_df
+                
+        X = df.drop(columns=[self.target_col])
+        y = df[self.target_col]
+        
+        if X.empty:
+            return pd.DataFrame(columns=['feature', 'metric1_spearman', 'metric2_mdi', 'metric3_product'])
+            
+        spearman_corr = np.abs(X.corrwith(y, method='spearman').fillna(0))
+        rfc = RandomForestClassifier(n_estimators=50, random_state=42)
+        rfc.fit(X, y)
+        
+        importance_df = pd.DataFrame({
+            'feature': X.columns,
+            'metric1_spearman': spearman_corr,
+            'metric2_mdi': rfc.feature_importances_,
+            'metric3_product': spearman_corr * rfc.feature_importances_
+        }).sort_values(by='metric3_product', ascending=False).reset_index(drop=True)
+        
+        joblib.dump(importance_df, cache_file)
+        return importance_df
+
+    def _top_feature_selection(self):
+        if self.importance_df is None or self.importance_df.empty:
+            return [], []
+            
+        top_metric1 = self.importance_df.nlargest(self.n_select, 'metric1_spearman')['feature'].tolist()
+        top_metric2 = self.importance_df.nlargest(self.n_select, 'metric2_mdi')['feature'].tolist()
+        top_metric3 = self.importance_df.nlargest(self.n_select, 'metric3_product')['feature'].tolist()
+        list_select = sorted(list(set(top_metric1 + top_metric2 + top_metric3)))
+        
+        top_create_metric1 = self.importance_df.nlargest(self.n_create, 'metric1_spearman')['feature'].tolist()
+        top_create_metric2 = self.importance_df.nlargest(self.n_create, 'metric2_mdi')['feature'].tolist()
+        top_create_metric3 = self.importance_df.nlargest(self.n_create, 'metric3_product')['feature'].tolist()
+        list_create = sorted(list(set(top_create_metric1 + top_create_metric2 + top_create_metric3)))
+        
+        return list_select, list_create
+
+    def _create_new_features(self, df, feature_list, epsilon=1e-6):
+        if not feature_list:
+            return pd.DataFrame(index=df.index)
+            
+        new_features_list = []
+        for feature in feature_list:
+            if feature in df.columns:
+                feature_values_abs = df[feature].abs()
+                new_features_list.append(pd.Series(np.sqrt(feature_values_abs), name=f'{feature}_pow0_5', index=df.index))
+                new_features_list.append(pd.Series(df[feature] ** 2, name=f'{feature}_pow2', index=df.index))
+                new_features_list.append(pd.Series(np.log(feature_values_abs + epsilon), name=f'{feature}_log', index=df.index))
+                
+        from itertools import combinations
+        for f1, f2 in combinations(feature_list, 2):
+            if f1 in df.columns and f2 in df.columns:
+                new_features_list.append(pd.Series(df[f1] + df[f2], name=f'{f1}_plus_{f2}', index=df.index))
+                new_features_list.append(pd.Series(df[f1] * df[f2], name=f'{f1}_times_{f2}', index=df.index))
+                
+        if not new_features_list:
+            return pd.DataFrame(index=df.index)
+            
+        return pd.concat(new_features_list, axis=1)
+
+    def _drop_intercorrelated(self, df, importance_df):
+        if df.empty or importance_df.empty or len(df.columns) < 2:
+            return df
+            
+        numeric_df = df.select_dtypes(include=np.number)
+        if numeric_df.empty or len(numeric_df.columns) < 2:
+            return df
+            
+        corr_matrix = numeric_df.corr(method='spearman').abs()
+        upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+        to_drop = set()
+        
+        for col in upper.columns:
+            if col in to_drop:
+                continue
+            correlated_features = upper.index[upper[col] > self.cor_val].tolist()
+            if correlated_features:
+                all_correlated = [col] + correlated_features
+                importance_subset = importance_df[importance_df['feature'].isin(all_correlated)]
+                importance_subset = importance_subset[importance_subset['feature'].isin(df.columns)]
+                if not importance_subset.empty:
+                    importance_subset = importance_subset.copy()
+                    importance_subset['metric3_product'] = pd.to_numeric(importance_subset['metric3_product'], errors='coerce').fillna(0)
+                    feature_to_keep = importance_subset.loc[importance_subset['metric3_product'].idxmax()]['feature']
+                    to_drop.update(f for f in all_correlated if f != feature_to_keep and f in df.columns)
+                    
+        return df.drop(columns=list(to_drop), errors='ignore')
+
     def run(self, df):
         df = self._validate_input(df)
-        # In this refactored version, FeatureEngineeringPipeline no longer performs
-        # feature selection, engineering, or intercorrelation dropping globally.
-        # It simply validates the input and returns the dataframe.
-        return df, pd.DataFrame(index=df.index), df # Return df_select, df_feng, df_combined
+        run_hash = f"n{self.n_select}_c{str(self.cor_val).replace('.', '')}"
+        self.importance_df = self._calcul_feature_importance(df, cache_key=run_hash)
+        
+        n_select_list, n_create_list = self._top_feature_selection()
+        
+        existing_n_select_list = [col for col in n_select_list if col in df.columns]
+        df_select = self._drop_intercorrelated(df[existing_n_select_list], self.importance_df)
+        df_select = df_select.join(df[[self.target_col]])
+        
+        existing_n_create_list = [col for col in n_create_list if col in df.columns]
+        df_feng_initial = self._create_new_features(df, existing_n_create_list)
+        
+        if not df_feng_initial.empty:
+            self.feng_importance_df = self._calcul_feature_importance(df_feng_initial.join(df[[self.target_col]]), cache_key=f"{run_hash}_feng")
+            df_feng = self._drop_intercorrelated(df_feng_initial, self.feng_importance_df)
+        else:
+            df_feng = pd.DataFrame(index=df.index)
+            
+        df_feng = df_feng.join(df[[self.target_col]])
+        
+        cols_to_drop_select = [self.target_col] if self.target_col in df_select.columns else []
+        cols_to_drop_feng = [self.target_col] if self.target_col in df_feng.columns else []
+        
+        df_combined_initial = pd.concat([
+            df_select.drop(columns=cols_to_drop_select, errors='ignore'),
+            df_feng.drop(columns=cols_to_drop_feng, errors='ignore')
+        ], axis=1)
+        
+        if not df_combined_initial.empty:
+            self.combined_importance_df = self._calcul_feature_importance(df_combined_initial.join(df[[self.target_col]]), cache_key=f"{run_hash}_combined")
+            df_combined = self._drop_intercorrelated(df_combined_initial, self.combined_importance_df)
+        else:
+            df_combined = pd.DataFrame(index=df.index)
+            
+        df_combined = df_combined.join(df[[self.target_col]])
+        
+        return df_select, df_feng, df_combined
 
 # -------------------
 # Config dataclass + arg parsing
@@ -85,9 +293,6 @@ class Config:
     target_col: str = "TARGET"
     verbose: bool = True
     variance_threshold: float = 0.01
-    # scaling options
-    scale: bool = False
-    scaler: str = "standard"  # allowed: "standard","robust","minmax"
 
     @staticmethod
     def from_args_and_env():
@@ -206,75 +411,13 @@ def main_cfg(cfg: Config):
         "percent_outliers": cfg.percent_outliers,
         "cache_dir": cfg.cache_dir,
         "target_col": cfg.target_col,
-        "variance_threshold": cfg.variance_threshold,
-        "scale": cfg.scale,
-        "scaler": cfg.scaler
+        "variance_threshold": cfg.variance_threshold
     }, indent=2))
     
     print("Loading df_global from:", cfg.input_parquet)
     df = pd.read_parquet(cfg.input_parquet, engine='pyarrow')
-    print(f"[process_df_global] Loaded df: rows={len(df)}, cols={len(df.columns)}")
     df_cleaned = clean_and_impute_data(df, target_col=cfg.target_col, completeness=cfg.completeness, impute=cfg.impute, verbose=cfg.verbose, variance_threshold=cfg.variance_threshold)
-    print(f"[process_df_global] After clean_and_impute_data: rows={len(df_cleaned)}, cols={len(df_cleaned.columns)}")
     df_cleaned = remove_percent_outliers_2sides(df_cleaned, percent=cfg.percent_outliers)
-    print(f"[process_df_global] After remove_percent_outliers_2sides: rows={len(df_cleaned)}, cols={len(df_cleaned.columns)}")
-    
-    # optional scaling BEFORE feature engineering
-    if cfg.scale:
-        print(f"[process_df_global] Scaling enabled: scaler='{cfg.scaler}'")
-        num_cols = df_cleaned.select_dtypes(include=[np.number]).columns.tolist()
-        # exclude target from scaling
-        if cfg.target_col in num_cols:
-            num_cols.remove(cfg.target_col)
-        if num_cols:
-            print(f"[process_df_global] Numeric cols to scale: {len(num_cols)} (showing up to 10): {num_cols[:10]}")
-            # compute pre-scaling diagnostics
-            pre_stats = df_cleaned[num_cols].describe().to_dict()
-            dbg_pre = os.path.join(cfg.cache_dir or ".", "scaling_pre_stats.json")
-            try:
-                with open(dbg_pre, "w", encoding="utf8") as _f:
-                    json.dump(pre_stats, _f, indent=2, default=int)
-                print(f"[process_df_global] Saved pre-scaling stats -> {dbg_pre}")
-            except Exception as e:
-                print(f"[process_df_global] Warning: could not save pre-scaling stats: {e}")
-
-            if cfg.scaler == "standard":
-                scaler_obj = StandardScaler()
-            elif cfg.scaler == "robust":
-                scaler_obj = RobustScaler()
-            elif cfg.scaler == "minmax":
-                scaler_obj = MinMaxScaler()
-            else:
-                raise ValueError(f"Unknown scaler '{cfg.scaler}'. Choose from 'standard','robust','minmax'.")
-
-            # fit_transform on numeric columns; keep index/columns intact
-            try:
-                scaled_vals = scaler_obj.fit_transform(df_cleaned[num_cols].astype(float))
-                print(f"[DEBUG] Scaler parameters (mean/scale) learned from entire dataset: mean={getattr(scaler_obj, 'mean_', 'N/A')}, scale={getattr(scaler_obj, 'scale_', 'N/A')}")
-                df_cleaned.loc[:, num_cols] = scaled_vals
-                # save scaler for reproducibility
-                scaler_fp = os.path.join(cfg.cache_dir or ".", "scaler.joblib")
-                try:
-                    joblib.dump(scaler_obj, scaler_fp)
-                    print(f"[process_df_global] Saved scaler -> {scaler_fp}")
-                except Exception as e:
-                    print(f"[process_df_global] Warning: could not save scaler: {e}")
-                # post-scaling diagnostics
-                post_stats = pd.DataFrame(df_cleaned[num_cols]).describe().to_dict()
-                dbg_post = os.path.join(cfg.cache_dir or ".", "scaling_post_stats.json")
-                try:
-                    with open(dbg_post, "w", encoding="utf8") as _f:
-                        json.dump(post_stats, _f, indent=2, default=int)
-                    print(f"[process_df_global] Saved post-scaling stats -> {dbg_post}")
-                except Exception as e:
-                    print(f"[process_df_global] Warning: could not save post-scaling stats: {e}")
-            except Exception as e:
-                print(f"[process_df_global] ERROR during scaling: {e}")
-                raise
-        else:
-            print("[process_df_global] No numeric columns to scale.")
-    else:
-        print("[process_df_global] Scaling disabled (cfg.scale=False).")
     
     print("Running feature engineering pipeline...")
     pipeline = FeatureEngineeringPipeline(n_select=cfg.n_select, cor_val=cfg.cor_val, target_col=cfg.target_col, cache_dir=cfg.cache_dir)

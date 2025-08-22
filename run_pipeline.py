@@ -1,23 +1,16 @@
-# --------------------
-# run_pipeline.py
-
-
 import os
 import json
 import argparse
 import importlib
 from pathlib import Path
-import time
-
 import mlflow
 import pandas as pd
 
 # local modules (assume in project root)
 eval_df_mod = importlib.import_module("evaluate_dataframe_potential")
 eval_algo_mod = importlib.import_module("evaluate_algorithm_potential")
-tuning_mod = importlib.import_module("model_hyperparam_tuning")  # exposes tune_model
+tuning_mod = importlib.import_module("model_hyperparam_tuning")
 process_df_mod = importlib.import_module("process_df_global")
-
 
 def save_balanced_versions(df_or_path, target_col, cache_dir, random_state=42, persist_parquet: bool = False):
     """
@@ -33,11 +26,11 @@ def save_balanced_versions(df_or_path, target_col, cache_dir, random_state=42, p
             df_bal = eval_df_mod.resample_for_balance(df, target_col=target_col, positive_fraction=frac, random_state=random_state)
         fp = None
         if persist_parquet:
-            fp = os.path.join(cache_dir, f"balanced_{Path(getattr(df_or_path,'name','df')).stem}_{name}.parquet")
+            stem = Path(getattr(df_or_path, 'name', 'df')).stem if isinstance(df_or_path, str) else 'df'
+            fp = os.path.join(cache_dir, f"balanced_{stem}_{name}.parquet")
             df_bal.to_parquet(fp, engine="pyarrow")
         out[name] = {"df": df_bal, "parquet": fp}
     return out
-
 
 def pick_best_balance(eval_results):
     best_name = "initial"
@@ -52,12 +45,12 @@ def pick_best_balance(eval_results):
         if "test_normalized_custom" in metrics:
             try:
                 val = float(metrics["test_normalized_custom"])
-            except Exception:
+            except (ValueError, TypeError):
                 val = None
         if val is None and "test_auc" in metrics:
             try:
                 val = float(metrics["test_auc"])
-            except Exception:
+            except (ValueError, TypeError):
                 val = None
         if val is None:
             continue
@@ -66,24 +59,21 @@ def pick_best_balance(eval_results):
             best_name = name
     return best_name
 
-
 def evaluate_and_select(processed_parquet, target_col, cache_dir, test_size, random_state):
-    df_eval = eval_df_mod.evaluate_dataframe(processed_parquet, target_col=target_col, test_size=test_size, random_state=random_state, cache_dir=cache_dir)
+    df_eval_results = eval_df_mod.evaluate_dataframe(processed_parquet, target_col=target_col, test_size=test_size, random_state=random_state, cache_dir=cache_dir)
     balanced_paths = save_balanced_versions(processed_parquet, target_col, cache_dir, random_state=random_state)
-    best_balance = pick_best_balance(df_eval)
-    chosen_fp = balanced_paths.get(best_balance, processed_parquet)
-    return {"df_eval": df_eval, "balanced_paths": balanced_paths, "best_balance": best_balance, "chosen_fp": chosen_fp}
-
+    best_balance = pick_best_balance(df_eval_results.get("metrics", {}))
+    chosen_fp = balanced_paths.get(best_balance, {}).get("parquet", processed_parquet)
+    return {"df_eval": df_eval_results, "balanced_paths": balanced_paths, "best_balance": best_balance, "chosen_fp": chosen_fp}
 
 def evaluate_algorithms_on(path_parquet, target_col, test_size, random_state, cache_dir):
     return eval_algo_mod.evaluate_algorithms(path_parquet, target_col=target_col, test_size=test_size, random_state=random_state, cache_dir=cache_dir)
 
-
-def tune_selected_models(path_parquet, target_col, models_to_tune, trials, random_state, cache_dir):
+def tune_selected_models(df_or_path, target_col, models_to_tune, trials, random_state, cache_dir):
     results = {}
     for model_name in models_to_tune:
         try:
-            study, pipe = tuning_mod.tune_model(path_parquet, model_name, target_col=target_col, n_trials=trials, random_state=random_state, cache_dir=cache_dir)
+            study, pipe = tuning_mod.tune_model(df_or_path, model_name, target_col=target_col, n_trials=trials, random_state=random_state, cache_dir=cache_dir)
             results[model_name] = {
                 "best_params": study.best_params,
                 "best_cv_custom": float(study.best_value),
@@ -91,7 +81,6 @@ def tune_selected_models(path_parquet, target_col, models_to_tune, trials, rando
         except Exception as e:
             results[model_name] = {"error": str(e)}
     return results
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Pipeline runner driven by pipeline_config.json (default).")
@@ -103,9 +92,8 @@ def parse_args():
     parser.add_argument("--mlflow-experiment", dest="mlflow_experiment", default="credit_scoring_pipeline_run")
     return parser.parse_args()
 
-
 def validate_pipeline_config(entries):
-    if not isinstance(entries, list) or len(entries) == 0:
+    if not isinstance(entries, list) or not entries:
         raise ValueError("pipeline_config must contain a non-empty 'entries' list")
     missing = []
     for i, e in enumerate(entries, start=1):
@@ -117,7 +105,6 @@ def validate_pipeline_config(entries):
         msgs = [f"entry #{idx} missing key: {k}" for idx, k in missing]
         raise ValueError("Invalid pipeline_config entries:\n  " + "\n  ".join(msgs))
     print(f"[run_pipeline][VALIDATION] pipeline_config OK: {len(entries)} entries.")
-
 
 def configure_mlflow(cache_dir: str, experiment_name: str):
     """Central MLflow configuration used by the pipeline (creates experiment if missing)."""
@@ -138,18 +125,16 @@ def configure_mlflow(cache_dir: str, experiment_name: str):
     # also export env var so subprocesses/libraries reuse it
     os.environ["MLFLOW_TRACKING_URI"] = mlflow.get_tracking_uri()
 
-
 def main():
     args = parse_args()
 
-    # ensure mlflow is configured immediately so all modules use same URI/experiment
     configure_mlflow(args.cache_dir, args.mlflow_experiment)
 
-    # load pipeline config (must be a list or dict with 'entries')
     if not os.path.exists(args.pipeline_config):
         raise FileNotFoundError(f"pipeline_config.json not found: {args.pipeline_config}")
     with open(args.pipeline_config, "r", encoding="utf8") as f:
         cfg = json.load(f)
+        
     if isinstance(cfg, dict) and "entries" in cfg:
         entries = cfg["entries"]
     elif isinstance(cfg, list):
@@ -160,9 +145,7 @@ def main():
     validate_pipeline_config(entries)
     print(f"[run_pipeline] Loaded pipeline_config with {len(entries)} entries from {args.pipeline_config}")
 
-    # --- PHASE 1: run process_df_global for all entries ---
     cfg_objs = []
-    processed_files = {}
     for i, ent in enumerate(entries, start=1):
         print(f"[run_pipeline] (phase1) [{i}/{len(entries)}] Processing entry via process_df_global")
         cfg_fields = set(getattr(process_df_mod.Config, "__annotations__", {}).keys())
@@ -172,12 +155,9 @@ def main():
             print(f"[run_pipeline] Note: ignoring non-Config keys for process_df_global: {ignored_keys}")
         cfg_obj = process_df_mod.Config(**cfg_kwargs)
         print(f"[run_pipeline]       input_parquet={cfg_obj.input_parquet} -> output_parquet={cfg_obj.output_parquet}")
-        # run process_df_global (should create output_parquet and follow its own validation)
         process_df_mod.main_cfg(cfg_obj)
         cfg_objs.append(cfg_obj)
-        processed_files[cfg_obj.input_parquet] = cfg_obj.output_parquet
 
-    # --- PHASE 2: create balanced versions for all processed outputs BEFORE evaluation step ---
     all_balanced_store = {}
     for cfg_obj in cfg_objs:
         processed_fp = cfg_obj.output_parquet
@@ -185,17 +165,14 @@ def main():
         cache = getattr(cfg_obj, "cache_dir", args.cache_dir) or args.cache_dir
         os.makedirs(cache, exist_ok=True)
         print(f"[run_pipeline] (phase2) Saving balanced versions for processed file: {processed_fp} -> cache {cache}")
-        # load processed dataframe (process_df_global must have written it)
         if not os.path.exists(processed_fp):
             raise FileNotFoundError(f"Expected processed output not found: {processed_fp}")
         processed_df = pd.read_parquet(processed_fp, engine="pyarrow")
         balanced_store = save_balanced_versions(processed_df, tgt, cache, random_state=getattr(cfg_obj, "random_state", 42), persist_parquet=getattr(cfg_obj, "persist_parquet", False))
         all_balanced_store[processed_fp] = balanced_store
 
-    # --- PHASE 3: evaluate and tune ---
     overall_results = {}
     for ent in entries:
-        # build Config-compatible object for access to keys (ignore extra keys)
         cfg_fields = set(getattr(process_df_mod.Config, "__annotations__", {}).keys())
         cfg_kwargs = {k: v for k, v in ent.items() if k in cfg_fields}
         cfg_obj = process_df_mod.Config(**cfg_kwargs)
@@ -207,66 +184,58 @@ def main():
         trials = ent.get("trials", 30)
         print(f"[run_pipeline] (phase3) Evaluating processed file: {processed_fp}")
 
-        # evaluate dataframe (returns metrics + balanced_dfs in newer API)
-        df_eval = eval_df_mod.evaluate_dataframe(processed_fp, target_col=cfg_obj.target_col, test_size=test_size, random_state=random_state, cache_dir=cache, persist_parquet=ent.get("persist_parquet", False))
-        # support both older API (dict of metrics) and newer ({"metrics":..., "balanced_dfs":...})
-        eval_metrics = df_eval.get("metrics") if isinstance(df_eval, dict) and "metrics" in df_eval else df_eval
+        df_eval_results = eval_df_mod.evaluate_dataframe(processed_fp, target_col=cfg_obj.target_col, test_size=test_size, random_state=random_state, cache_dir=cache, persist_parquet=ent.get("persist_parquet", False))
+        eval_metrics = df_eval_results.get("metrics") if isinstance(df_eval_results, dict) else df_eval_results
 
         balanced_store = all_balanced_store.get(processed_fp, {})
         best_balance = pick_best_balance(eval_metrics)
         chosen_entry = balanced_store.get(best_balance)
+        
         if chosen_entry and "df" in chosen_entry:
             chosen_df = chosen_entry["df"]
         else:
-            # fallback to processed file
             chosen_df = pd.read_parquet(processed_fp, engine="pyarrow")
 
         print(f"[run_pipeline] Selected best balance '{best_balance}' (rows={len(chosen_df)})")
 
-        algo_results = eval_algo_mod.evaluate_algorithms(chosen_df, target_col=cfg_obj.target_col, test_size=test_size, random_state=random_state, cache_dir=cache, persist_parquet=ent.get("persist_parquet", False))
+        algo_results = eval_algo_mod.evaluate_algorithms(chosen_df, target_col=cfg_obj.target_col, test_size=test_size, random_state=random_state, cache_dir=cache)
 
-        # decide models to tune
         to_tune = ent.get("tune_models")
         if not to_tune:
             best_model = None
             best_val = float("-inf")
             for m, stats in (algo_results or {}).items():
-                try:
-                    val = float(stats.get("test_normalized_custom", stats.get("test_auc", -1.0)))
-                except Exception:
-                    val = float(stats.get("test_auc", -1.0))
+                val = float(stats.get("test_normalized_custom", stats.get("test_auc", -1.0)))
                 if val > best_val:
                     best_val = val
                     best_model = m
             to_tune = [best_model] if best_model else ["random_forest"]
 
-        # filter available backends
         available = {"logreg", "random_forest"}
         try:
-            import xgboost  # noqa
+            import xgboost
             available.add("xgboost")
-        except Exception:
+        except ImportError:
             pass
         try:
-            import lightgbm  # noqa
+            import lightgbm
             available.add("lightgbm")
-        except Exception:
+        except ImportError:
             pass
+            
         to_tune = [m for m in (to_tune or []) if m and m in available]
         if not to_tune:
             to_tune = ["random_forest"]
 
         tuning_summary = tune_selected_models(chosen_df, cfg_obj.target_col, to_tune, trials, random_state, cache)
-        overall_results[processed_fp] = {"df_eval": df_eval, "algo_results": algo_results, "tuning_summary": tuning_summary}
+        overall_results[processed_fp] = {"df_eval": df_eval_results, "algo_results": algo_results, "tuning_summary": tuning_summary}
         print(f"[run_pipeline] Completed entry for {processed_fp}")
 
     print("[run_pipeline] Pipeline finished for all entries.")
-    # optionally persist overall_results to cache
     out_summary = os.path.join(args.cache_dir, "pipeline_overall_results.json")
     with open(out_summary, "w", encoding="utf8") as f:
         json.dump(overall_results, f, indent=2)
     print(f"[run_pipeline] Summary saved to {out_summary}")
-
 
 if __name__ == "__main__":
     main()
