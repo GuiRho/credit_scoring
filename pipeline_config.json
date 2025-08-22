@@ -1,0 +1,17 @@
+{
+  "entries": [
+    {
+      "input_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\df\\df_global.parquet",
+      "output_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\df\\df_final_a.parquet",
+      "n_select": 50,
+      "cor_val": 0.7,
+      "completeness": 85,
+      "impute": "median",
+      "percent_outliers": 1,
+      "cache_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache",
+      "target_col": "TARGET",
+      "variance_threshold": 0.01,
+      "persist_parquet": false
+    }
+  ]
+}

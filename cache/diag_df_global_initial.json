@@ -1,0 +1,12 @@
+{
+  "balance": "initial",
+  "n_rows": 356251,
+  "target_col": "TARGET",
+  "n_nan": 48744,
+  "n_inf": 0,
+  "value_counts": {
+    "0.0": 282682,
+    "nan": 48744,
+    "1.0": 24825
+  }
+}

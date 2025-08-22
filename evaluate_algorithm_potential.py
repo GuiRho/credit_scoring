@@ -1,16 +1,20 @@
+from pathlib import Path
 import os
 import json
-import mlflow
+import argparse
+
 import numpy as np
 import pandas as pd
-import argparse
-from pathlib import Path
+import mlflow
+import joblib
+
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.metrics import roc_auc_score, accuracy_score
+from sklearn.metrics import roc_auc_score, accuracy_score, recall_score, confusion_matrix
+
 try:
     from xgboost import XGBClassifier
     XGB_AVAILABLE = True
@@ -25,8 +29,56 @@ CLASSIFIERS = {
 if XGB_AVAILABLE:
     CLASSIFIERS["xgboost"] = XGBClassifier(use_label_encoder=False, eval_metric="logloss", random_state=42)
 
-def evaluate_algorithms(path_parquet: str, target_col: str = "TARGET", test_size: float = 0.2, random_state: int = 42, cache_dir: str = "cache"):
-    df = pd.read_parquet(path_parquet, engine='pyarrow')
+
+def _best_threshold_max_recall(y_true, y_pred_proba):
+    thresholds = np.linspace(0.01, 0.99, 99)
+    best_t = 0.5
+    best_rec = -1.0
+    for t in thresholds:
+        r = recall_score(y_true, (y_pred_proba >= t).astype(int))
+        if r > best_rec:
+            best_rec = r
+            best_t = t
+    return best_t, best_rec
+
+
+def _compute_custom_and_normalized(y_true, y_pred_bin, pos_proportion):
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred_bin).ravel()
+    custom = 2 * tp + 1 * tn - 1 * fp - 10 * fn
+    n = len(y_true)
+    pos_prop = max(pos_proportion, 1e-9)
+    normalized = custom * (1.0 / max(1, n)) * (1.0 / pos_prop)
+    return float(custom), float(normalized)
+
+
+def validate_algorithm_inputs(path_parquet: str, target_col: str, cache_dir: str):
+    errs = []
+    if not path_parquet or not os.path.exists(path_parquet):
+        errs.append(f"input parquet not found: {path_parquet}")
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+    except Exception as e:
+        errs.append(f"cannot prepare cache_dir: {cache_dir} -> {e}")
+    if errs:
+        msg = "evaluate_algorithms input validation failed:\n  " + "\n  ".join(errs)
+        print(f"[evaluate_algorithms][VALIDATION] {msg}")
+        raise ValueError(msg)
+    print(f"[evaluate_algorithms][VALIDATION] OK: parquet={path_parquet}, target={target_col}, cache={cache_dir}")
+
+
+def _load_df(df_or_path):
+    if isinstance(df_or_path, pd.DataFrame):
+        return df_or_path.copy()
+    return pd.read_parquet(df_or_path, engine="pyarrow")
+
+
+def evaluate_algorithms(df_or_path, target_col: str = "TARGET", test_size: float = 0.2,
+                        random_state: int = 42, cache_dir: str = r"C:\Users\gui\Documents\OpenClassrooms\Projet 7\cache",
+                        persist_parquet: bool = False):
+    """
+    Accept DataFrame or path. Returns per-algorithm metrics. Does not require parquet files.
+    """
+    df = _load_df(df_or_path)
     if target_col not in df.columns:
         raise ValueError(f"Target column '{target_col}' not found in dataframe")
     X = df.drop(columns=[target_col])
@@ -34,21 +86,50 @@ def evaluate_algorithms(path_parquet: str, target_col: str = "TARGET", test_size
     if X.shape[1] == 0:
         raise ValueError("No numeric features available after selection for modeling")
     y = df[target_col].astype(int)
+    pos_prop_global = float(y.mean()) if len(y) > 0 else 0.0
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, stratify=y, random_state=random_state)
 
-    mlflow.set_experiment("credit_scoring_algorithm_evaluation")
     os.makedirs(cache_dir, exist_ok=True)
+    # set MLflow tracking inside cache_dir so artifacts live in the external folder
+    try:
+        mlflow.set_tracking_uri(f"file://{os.path.join(os.path.abspath(cache_dir), 'mlruns')}")
+    except Exception:
+        pass
+    mlflow.set_experiment("credit_scoring_algorithm_evaluation")
     summary = {}
     for name, clf in CLASSIFIERS.items():
         pipe = Pipeline([("scaler", StandardScaler()), ("clf", clf)])
         pipe.fit(X_train, y_train)
-        y_train_p = pipe.predict_proba(X_train)[:, 1]
-        y_test_p = pipe.predict_proba(X_test)[:, 1]
-        train_auc = float(roc_auc_score(y_train, y_train_p))
-        test_auc = float(roc_auc_score(y_test, y_test_p))
-        train_acc = float(accuracy_score(y_train, (y_train_p >= 0.5).astype(int)))
-        test_acc = float(accuracy_score(y_test, (y_test_p >= 0.5).astype(int)))
-        summary[name] = {"train_auc": train_auc, "test_auc": test_auc, "train_acc": train_acc, "test_acc": test_acc}
+        p_train = pipe.predict_proba(X_train)[:, 1]
+        p_test = pipe.predict_proba(X_test)[:, 1]
+
+        # Find best threshold on train to maximize recall
+        best_t, best_rec = _best_threshold_max_recall(y_train, p_train)
+
+        # compute metrics using that threshold
+        y_train_bin = (p_train >= best_t).astype(int)
+        y_test_bin = (p_test >= best_t).astype(int)
+        train_custom, train_norm = _compute_custom_and_normalized(y_train, y_train_bin, pos_prop_global)
+        test_custom, test_norm = _compute_custom_and_normalized(y_test, y_test_bin, pos_prop_global)
+
+        train_auc = float(roc_auc_score(y_train, p_train))
+        test_auc = float(roc_auc_score(y_test, p_test))
+        train_acc = float(accuracy_score(y_train, y_train_bin))
+        test_acc = float(accuracy_score(y_test, y_test_bin))
+
+        summary[name] = {
+            "train_auc": train_auc,
+            "test_auc": test_auc,
+            "train_acc": train_acc,
+            "test_acc": test_acc,
+            "best_threshold_train": float(best_t),
+            "train_custom": float(train_custom),
+            "test_custom": float(test_custom),
+            "train_normalized_custom": float(train_norm),
+            "test_normalized_custom": float(test_norm),
+            "n_rows": len(df),
+            "n_cols": X.shape[1]
+        }
 
         with mlflow.start_run(run_name=f"algo_{Path(path_parquet).stem}_{name}", nested=False):
             mlflow.log_param("algorithm", name)
@@ -57,19 +138,26 @@ def evaluate_algorithms(path_parquet: str, target_col: str = "TARGET", test_size
             mlflow.log_metric("test_auc", test_auc)
             mlflow.log_metric("train_acc", train_acc)
             mlflow.log_metric("test_acc", test_acc)
+            mlflow.log_metric("train_custom", train_custom)
+            mlflow.log_metric("test_custom", test_custom)
+            mlflow.log_metric("train_normalized_custom", train_norm)
+            mlflow.log_metric("test_normalized_custom", test_norm)
+            mlflow.log_metric("best_threshold_train", float(best_t))
             # save model artifact
             model_fp = os.path.join(cache_dir, f"model_{Path(path_parquet).stem}_{name}.joblib")
             os.makedirs(os.path.dirname(model_fp) or ".", exist_ok=True)
-            import joblib
             joblib.dump(pipe, model_fp)
             mlflow.log_artifact(model_fp, artifact_path="models")
     return summary
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True)
+    parser.add_argument("--input", required=True, help="Path to processed parquet (from process_df_global)")
     parser.add_argument("--target", default="TARGET")
     parser.add_argument("--cache-dir", default="cache")
+    parser.add_argument("--test-size", type=float, default=0.2)
+    parser.add_argument("--random-state", type=int, default=42)
     args = parser.parse_args()
-    s = evaluate_algorithms(args.input, target_col=args.target, cache_dir=args.cache_dir)
-    print(json.dumps(s, indent=2))
+    res = evaluate_algorithms(args.input, target_col=args.target, test_size=args.test_size, random_state=args.random_state, cache_dir=args.cache_dir)
+    print(json.dumps(res, indent=2))

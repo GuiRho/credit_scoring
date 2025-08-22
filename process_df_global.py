@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import json
 import argparse
 from dataclasses import dataclass, field
@@ -223,13 +224,13 @@ class FeatureEngineeringPipeline:
 @dataclass
 class Config:
     input_parquet: str = r"C:\Users\gui\Documents\OpenClassrooms\Projet 7\df\df_global.parquet"
-    output_parquet: str = r"./df_final.parquet"
+    output_parquet: str = r"C:\Users\gui\Documents\OpenClassrooms\Projet 7\df\df_final.parquet"
     n_select: int = 50
     cor_val: float = 0.7
     completeness: int = 85
     impute: str = "median"
     percent_outliers: int = 1
-    cache_dir: Optional[str] = None
+    cache_dir: Optional[str] = r"C:\Users\gui\Documents\OpenClassrooms\Projet 7\cache"
     target_col: str = "TARGET"
     verbose: bool = True
     variance_threshold: float = 0.01
@@ -305,7 +306,37 @@ class Config:
 # Updated main that accepts Config
 # --------------------
 
+def validate_process_config(cfg):
+    """Validate process_df_global.Config instance; raise ValueError on fatal problems."""
+    errors = []
+    # input file must exist
+    if not cfg.input_parquet or not os.path.exists(cfg.input_parquet):
+        errors.append(f"input_parquet missing or not found: {cfg.input_parquet}")
+    # output dir must be creatable
+    out_dir = os.path.dirname(cfg.output_parquet) or "."
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except Exception as e:
+        errors.append(f"output_parquet dir not creatable: {out_dir} -> {e}")
+    # numerical ranges
+    if not (0 <= cfg.completeness <= 100):
+        errors.append(f"completeness must be 0-100, got: {cfg.completeness}")
+    if cfg.n_select is None or cfg.n_select <= 0:
+        errors.append(f"n_select must be positive integer, got: {cfg.n_select}")
+    if not (0.0 <= cfg.cor_val <= 1.0):
+        errors.append(f"cor_val must be between 0 and 1, got: {cfg.cor_val}")
+    if cfg.impute not in ("median","mean","mode","zero","ffill","bfill","drop","raise"):
+        errors.append(f"impute policy unknown: {cfg.impute}")
+    if cfg.variance_threshold is None or cfg.variance_threshold < 0:
+        errors.append(f"variance_threshold must be >= 0, got: {cfg.variance_threshold}")
+    if errors:
+        msg = "process_df_global config validation failed:\n  " + "\n  ".join(errors)
+        print(f"[process_df_global][VALIDATION] {msg}")
+        raise ValueError(msg)
+    print(f"[process_df_global][VALIDATION] OK: input={cfg.input_parquet}, output={cfg.output_parquet}, impute={cfg.impute}")
+
 def main_cfg(cfg: Config):
+    validate_process_config(cfg)
     print("Configuration:")
     print(json.dumps({
         "input_parquet": cfg.input_parquet,
@@ -327,20 +358,102 @@ def main_cfg(cfg: Config):
     pipeline = FeatureEngineeringPipeline(n_select=cfg.n_select, cor_val=cfg.cor_val, target_col=cfg.target_col, cache_dir=cfg.cache_dir)
     _, _, df_final = pipeline.run(df_cleaned.copy())
 
-    # ensure output dir exists
+    # --- NEW: enforce completeness, variance threshold, imputation + handle rows w/o target ---
+    print(f"[process_df_global] Starting post-processing: completeness={cfg.completeness}%, variance_threshold={cfg.variance_threshold}, impute={cfg.impute}")
+
+    # 1) Drop columns below completeness threshold (percentage of non-null values)
+    total_rows = len(df_final)
+    if total_rows == 0:
+        raise ValueError("[process_df_global] df_final is empty after feature pipeline.")
+    col_completeness = (1 - df_final.isnull().sum() / total_rows) * 100
+    cols_to_keep = col_completeness[col_completeness >= float(cfg.completeness)].index.tolist()
+    cols_dropped_for_completeness = [c for c in df_final.columns if c not in cols_to_keep]
+    if cols_dropped_for_completeness:
+        print(f"[process_df_global] Dropping {len(cols_dropped_for_completeness)} cols for low completeness: {cols_dropped_for_completeness[:10]}")
+    df_final = df_final[cols_to_keep].copy()
+
+    # 2) Drop numeric columns whose variance <= variance_threshold
+    # NOTE: variance_threshold is expected to be applied once (earlier in clean_and_impute_data
+    # or inside FeatureEngineeringPipeline). Do not apply it twice here.
+    # If you want variance filtering here instead, remove it from the earlier step.
+
+    # 3) Impute missing values USING ALL ROWS (including those with missing target) so we can fill feature NAs
+    def _impute_df(df, strategy):
+        df = df.copy()
+        if strategy in ("median", "mean"):
+            num_cols = df.select_dtypes(include=[np.number]).columns
+            if strategy == "median":
+                fill_vals = df[num_cols].median(numeric_only=True)
+            else:
+                fill_vals = df[num_cols].mean(numeric_only=True)
+            df[num_cols] = df[num_cols].fillna(fill_vals)
+            # categorical: fill with mode
+            cat_cols = df.select_dtypes(exclude=[np.number]).columns
+            for c in cat_cols:
+                mode_vals = df[c].mode(dropna=True)
+                if not mode_vals.empty:
+                    df[c] = df[c].fillna(mode_vals.iloc[0])
+        elif strategy == "mode":
+            for c in df.columns:
+                mode_vals = df[c].mode(dropna=True)
+                if not mode_vals.empty:
+                    df[c] = df[c].fillna(mode_vals.iloc[0])
+        elif strategy == "zero":
+            df = df.fillna(0)
+        elif strategy in ("ffill", "bfill"):
+            df = df.fillna(method=strategy)
+        elif strategy == "drop":
+            # keep rows (we still want to use rows without target to impute other rows) -> here drop columns with too many NAs already handled above
+            df = df.dropna(axis=0, how="any")
+        else:
+            # default: median
+            num_cols = df.select_dtypes(include=[np.number]).columns
+            fill_vals = df[num_cols].median(numeric_only=True)
+            df[num_cols] = df[num_cols].fillna(fill_vals)
+            cat_cols = df.select_dtypes(exclude=[np.number]).columns
+            for c in cat_cols:
+                mode_vals = df[c].mode(dropna=True)
+                if not mode_vals.empty:
+                    df[c] = df[c].fillna(mode_vals.iloc[0])
+        return df
+
+    print(f"[process_df_global] Imputing missing feature values using policy: '{cfg.impute}' (rows WITHOUT target are used for imputation)")
+    df_imputed = _impute_df(df_final, cfg.impute)
+
+    # 4) After imputation, drop rows that do not have a valid target (we kept them only for imputation)
+    if cfg.target_col in df_imputed.columns:
+        y_raw = df_imputed[cfg.target_col]
+        y_num = pd.to_numeric(y_raw, errors="coerce")
+        n_missing_target = int(y_num.isna().sum())
+        if n_missing_target > 0:
+            print(f"[process_df_global] Dropping {n_missing_target} rows with missing target '{cfg.target_col}' (they were kept for imputation).")
+            df_imputed = df_imputed.loc[~y_num.isna()].copy()
+        # final safe cast to int
+        df_imputed[cfg.target_col] = pd.to_numeric(df_imputed[cfg.target_col], errors="coerce").fillna(0).astype(int)
+    else:
+        print(f"[process_df_global] Warning: target_col '{cfg.target_col}' not present after pipeline/imputation.")
+
+    # replace df_final with the imputed-and-cleaned dataframe
+    df_final = df_imputed
+    n_cols = df_final.shape[1]
+    n_rows = df_final.shape[0]
+    print(f"[process_df_global] Final dataframe shape: rows={n_rows}, cols={n_cols}")
+
+    # --- ALWAYS persist the processed dataframe to output_parquet before MLflow logging ---
     os.makedirs(os.path.dirname(cfg.output_parquet) or ".", exist_ok=True)
-
-    # reset index for reproducibility and ensure target is present and numeric
-    df_final = df_final.reset_index(drop=True)
-    if cfg.target_col in df_final.columns:
-        df_final[cfg.target_col] = pd.to_numeric(df_final[cfg.target_col], errors='coerce').fillna(0).astype(int)
-
-    df_final.to_parquet(cfg.output_parquet, engine='pyarrow')
-    print(f"Saved processed output to {cfg.output_parquet}")
+    df_final.to_parquet(cfg.output_parquet, engine="pyarrow")
+    print(f"[process_df_global] Wrote output_parquet: {cfg.output_parquet}")
 
     # -- MLflow logging: dataframe metadata + config --
     try:
         import mlflow
+        # ensure mlruns saved in external cache_dir (use Path.as_uri to produce valid file:// URI on Windows)
+        os.makedirs(cfg.cache_dir or ".", exist_ok=True)
+        try:
+            mlruns_dir = os.path.join(os.path.abspath(cfg.cache_dir or "."), "mlruns")
+            mlflow.set_tracking_uri(Path(mlruns_dir).as_uri())
+        except Exception:
+            pass
         mlflow.set_experiment("credit_scoring_process_df")
         with mlflow.start_run(run_name=f"process_df_n{cfg.n_select}_c{cfg.cor_val}"):
             # log basic params
@@ -360,11 +473,12 @@ def main_cfg(cfg: Config):
             mlflow.log_metric("df_n_cols", int(n_cols))
 
             # save a small sample and the parquet as artifacts
+            os.makedirs(os.path.dirname(cfg.output_parquet), exist_ok=True)
+            df_final.to_parquet(cfg.output_parquet, engine="pyarrow")
             sample_path = os.path.join(cfg.cache_dir or ".", "df_final_sample.csv")
             df_final.head(200).to_csv(sample_path, index=False)
             mlflow.log_artifact(sample_path, artifact_path="dataframe_samples")
-
-            # log the full parquet as artifact
+            # log the full parquet as artifact (stored in external output location)
             mlflow.log_artifact(cfg.output_parquet, artifact_path="dataframes")
     except Exception as e:
         print(f"Warning: MLflow logging failed: {e}")

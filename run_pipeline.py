@@ -1,145 +1,250 @@
 import os
 import json
 import argparse
-from pathlib import Path
 import importlib
-import joblib
+from pathlib import Path
+import time
 
-import numpy as np
-import pandas as pd
 import mlflow
+import pandas as pd
 
 # local modules (assume in project root)
 eval_df_mod = importlib.import_module("evaluate_dataframe_potential")
 eval_algo_mod = importlib.import_module("evaluate_algorithm_potential")
 tuning_mod = importlib.import_module("model_hyperparam_tuning")  # exposes tune_model
+process_df_mod = importlib.import_module("process_df_global")
 
-def save_balanced_versions(df_fp, target_col, cache_dir, random_state=42):
-    df = pd.read_parquet(df_fp, engine="pyarrow")
+
+def save_balanced_versions(df_or_path, target_col, cache_dir, random_state=42, persist_parquet: bool = False):
+    """
+    Returns mapping: balance_name -> DataFrame (and optionally writes parquets if persist_parquet True).
+    """
+    df = df_or_path if isinstance(df_or_path, pd.DataFrame) else pd.read_parquet(df_or_path, engine="pyarrow")
     balances = {"initial": None, "25_75": 0.25, "50_50": 0.5}
-    out_paths = {}
-    os.makedirs(cache_dir, exist_ok=True)
+    out = {}
     for name, frac in balances.items():
-        outp = os.path.join(cache_dir, f"{Path(df_fp).stem}_{name}.parquet")
         if frac is None:
-            df.to_parquet(outp, engine='pyarrow')
+            df_bal = df.copy()
         else:
             df_bal = eval_df_mod.resample_for_balance(df, target_col=target_col, positive_fraction=frac, random_state=random_state)
-            df_bal.to_parquet(outp, engine='pyarrow')
-        out_paths[name] = outp
-    return out_paths
+        fp = None
+        if persist_parquet:
+            fp = os.path.join(cache_dir, f"balanced_{Path(getattr(df_or_path,'name','df')).stem}_{name}.parquet")
+            df_bal.to_parquet(fp, engine="pyarrow")
+        out[name] = {"df": df_bal, "parquet": fp}
+    return out
+
 
 def pick_best_balance(eval_results):
     best_name = "initial"
-    best_score = -1.0
+    best_score = float("-inf")
     if not isinstance(eval_results, dict):
         return best_name
     for name, metrics in eval_results.items():
-        try:
-            score = float(metrics.get("test_auc", -1.0))
-        except Exception:
-            score = -1.0
-        if score > best_score:
-            best_score = score
+        if not isinstance(metrics, dict):
+            continue
+        # prefer normalized custom score if available, otherwise fallback to test_auc
+        val = None
+        if "test_normalized_custom" in metrics:
+            try:
+                val = float(metrics["test_normalized_custom"])
+            except Exception:
+                val = None
+        if val is None and "test_auc" in metrics:
+            try:
+                val = float(metrics["test_auc"])
+            except Exception:
+                val = None
+        if val is None:
+            continue
+        if val > best_score:
+            best_score = val
             best_name = name
     return best_name
+
 
 def evaluate_and_select(processed_parquet, target_col, cache_dir, test_size, random_state):
     df_eval = eval_df_mod.evaluate_dataframe(processed_parquet, target_col=target_col, test_size=test_size, random_state=random_state, cache_dir=cache_dir)
     balanced_paths = save_balanced_versions(processed_parquet, target_col, cache_dir, random_state=random_state)
     best_balance = pick_best_balance(df_eval)
-    return df_eval, balanced_paths, best_balance
+    chosen_fp = balanced_paths.get(best_balance, processed_parquet)
+    return {"df_eval": df_eval, "balanced_paths": balanced_paths, "best_balance": best_balance, "chosen_fp": chosen_fp}
+
 
 def evaluate_algorithms_on(path_parquet, target_col, test_size, random_state, cache_dir):
     return eval_algo_mod.evaluate_algorithms(path_parquet, target_col=target_col, test_size=test_size, random_state=random_state, cache_dir=cache_dir)
 
+
 def tune_selected_models(path_parquet, target_col, models_to_tune, trials, random_state, cache_dir):
     results = {}
     for model_name in models_to_tune:
-        study, fitted = tuning_mod.tune_model(path_parquet, model_name, target_col=target_col, n_trials=trials, random_state=random_state, cache_dir=cache_dir)
-        results[model_name] = {"best_value": float(study.best_value), "best_params": study.best_params}
+        try:
+            study, pipe = tuning_mod.tune_model(path_parquet, model_name, target_col=target_col, n_trials=trials, random_state=random_state, cache_dir=cache_dir)
+            results[model_name] = {
+                "best_params": study.best_params,
+                "best_cv_custom": float(study.best_value),
+            }
+        except Exception as e:
+            results[model_name] = {"error": str(e)}
     return results
 
+
 def parse_args():
-    parser = argparse.ArgumentParser(description="Pipeline runner (assumes processed df_global already exists).")
-    parser.add_argument("--input-parquet", dest="input_parquet", required=True, help="Input processed parquet (df_global / processed)")
-    parser.add_argument("--cache-dir", dest="cache_dir", default=os.path.join(os.getcwd(), "cache"))
-    parser.add_argument("--target-col", dest="target_col", default="TARGET")
-    parser.add_argument("--test-size", dest="test_size", type=float, default=0.2)
-    parser.add_argument("--random-state", dest="random_state", type=int, default=42)
-    parser.add_argument("--trials", dest="trials", type=int, default=30)
-    parser.add_argument("--tune-models", nargs="*", help="Models to tune (logreg random_forest xgboost lightgbm). If omitted, auto-select best from evaluate_algorithm_potential.")
+    parser = argparse.ArgumentParser(description="Pipeline runner driven by pipeline_config.json (default).")
+    default_cfg = os.path.join(os.getcwd(), "pipeline_config.json")
+    parser.add_argument("--pipeline-config", dest="pipeline_config", default=default_cfg,
+                        help=f"Path to pipeline_config.json (default: {default_cfg}). The pipeline_config.json is the single source of truth.")
+    parser.add_argument("--cache-dir", dest="cache_dir", default=r"C:\Users\gui\Documents\OpenClassrooms\Projet 7\cache",
+                        help="Override cache dir (not recommended). By default artifacts are stored outside the repo.")
     parser.add_argument("--mlflow-experiment", dest="mlflow_experiment", default="credit_scoring_pipeline_run")
     return parser.parse_args()
 
+
+def validate_pipeline_config(entries):
+    if not isinstance(entries, list) or len(entries) == 0:
+        raise ValueError("pipeline_config must contain a non-empty 'entries' list")
+    missing = []
+    for i, e in enumerate(entries, start=1):
+        if "input_parquet" not in e:
+            missing.append((i, "input_parquet"))
+        if "output_parquet" not in e:
+            missing.append((i, "output_parquet"))
+    if missing:
+        msgs = [f"entry #{idx} missing key: {k}" for idx, k in missing]
+        raise ValueError("Invalid pipeline_config entries:\n  " + "\n  ".join(msgs))
+    print(f"[run_pipeline][VALIDATION] pipeline_config OK: {len(entries)} entries.")
+
+
+def configure_mlflow(cache_dir: str, experiment_name: str):
+    """Central MLflow configuration used by the pipeline (creates experiment if missing)."""
+    os.makedirs(cache_dir, exist_ok=True)
+    mlruns_dir = os.path.join(os.path.abspath(cache_dir), "mlruns")
+    try:
+        # Path.as_uri() produces a valid file:// URI on Windows
+        mlflow_uri = Path(mlruns_dir).as_uri()
+        mlflow.set_tracking_uri(mlflow_uri)
+    except Exception:
+        # fallback to plain absolute path with file:// prefix
+        mlflow.set_tracking_uri(f"file://{os.path.abspath(mlruns_dir)}")
+    # create or get experiment
+    mlflow.set_experiment(experiment_name)
+    print(f"[run_pipeline] MLflow tracking URI: {mlflow.get_tracking_uri()}")
+    exp = mlflow.get_experiment_by_name(experiment_name)
+    print(f"[run_pipeline] MLflow experiment: name='{experiment_name}', id={exp.experiment_id if exp else 'NOT_CREATED'}")
+    # also export env var so subprocesses/libraries reuse it
+    os.environ["MLFLOW_TRACKING_URI"] = mlflow.get_tracking_uri()
+
+
 def main():
     args = parse_args()
-    os.makedirs(args.cache_dir, exist_ok=True)
 
-    processed_fp = args.input_parquet
-    if not os.path.exists(processed_fp):
-        raise FileNotFoundError(f"Processed parquet not found: {processed_fp}")
+    # ensure mlflow is configured immediately so all modules use same URI/experiment
+    configure_mlflow(args.cache_dir, args.mlflow_experiment)
 
-    # Step: evaluate dataframe balances and pick best one
-    df_eval, balanced_paths, best_balance = evaluate_and_select(processed_fp, args.target_col, args.cache_dir, args.test_size, args.random_state)
-
-    # Step: evaluate algorithms on chosen best balance
-    chosen_fp = balanced_paths.get(best_balance, processed_fp)
-    algo_results = evaluate_algorithms_on(chosen_fp, args.target_col, args.test_size, args.random_state, cache_dir=args.cache_dir)
-
-    # Decide which models to tune
-    if args.tune_models:
-        to_tune = args.tune_models
+    # load pipeline config (must be a list or dict with 'entries')
+    if not os.path.exists(args.pipeline_config):
+        raise FileNotFoundError(f"pipeline_config.json not found: {args.pipeline_config}")
+    with open(args.pipeline_config, "r", encoding="utf8") as f:
+        cfg = json.load(f)
+    if isinstance(cfg, dict) and "entries" in cfg:
+        entries = cfg["entries"]
+    elif isinstance(cfg, list):
+        entries = cfg
     else:
-        # pick best model by test_auc
-        best_model = None
-        best_auc = -1.0
-        for m, stats in (algo_results or {}).items():
-            try:
-                auc = float(stats.get("test_auc", -1.0))
-            except Exception:
-                auc = -1.0
-            if auc > best_auc:
-                best_auc = auc
-                best_model = m
-        mapping = {"logreg": "logreg", "random_forest": "random_forest", "gradient_boosting": None, "xgboost": "xgboost"}
-        to_tune = [mapping.get(best_model, "random_forest")]
+        raise ValueError("pipeline_config must be a list or a dict with an 'entries' list")
 
-    # Filter unsupported names
-    available = {"logreg", "random_forest"}
-    try:
-        import xgboost  # noqa
-        available.add("xgboost")
-    except Exception:
-        pass
-    try:
-        import lightgbm  # noqa
-        available.add("lightgbm")
-    except Exception:
-        pass
+    validate_pipeline_config(entries)
+    print(f"[run_pipeline] Loaded pipeline_config with {len(entries)} entries from {args.pipeline_config}")
+    # phase 1: run process_df_global for all entries (produce processed outputs)
+    processed_files = {}
+    for i, ent in enumerate(entries, start=1):
+        print(f"[run_pipeline] (phase1) [{i}/{len(entries)}] Processing entry via process_df_global")
+        # instantiate process_df_mod.Config with only the fields it expects (ignore extra pipeline keys)
+        cfg_fields = set(getattr(process_df_mod.Config, "__annotations__", {}).keys())
+        cfg_kwargs = {k: v for k, v in ent.items() if k in cfg_fields}
+        ignored_keys = [k for k in ent.keys() if k not in cfg_fields]
+        if ignored_keys:
+            print(f"[run_pipeline] Note: ignoring non-Config keys for process_df_global: {ignored_keys}")
+        cfg_obj = process_df_mod.Config(**cfg_kwargs)
+        print(f"[run_pipeline]       input_parquet={cfg_obj.input_parquet} -> output_parquet={cfg_obj.output_parquet}")
+        # run process_df_global main_cfg (should write output_parquet and mlflow artifacts to cfg_obj.cache_dir)
+        process_df_mod.main_cfg(cfg_obj)
+        processed_files[cfg_obj.input_parquet] = cfg_obj.output_parquet
 
-    to_tune = [m for m in (to_tune or []) if m and m in available]
-    if not to_tune:
-        to_tune = ["random_forest"]
+    # phase 2: create balanced versions for all processed outputs BEFORE evaluation step
+    all_balanced_store = {}
+    for src_input, processed_fp in processed_files.items():
+        tgt = None
+        # find corresponding entry to read target_col / cache_dir / random_state
+        matching = next((e for e in entries if e.get("input_parquet") == src_input or e.get("output_parquet") == processed_fp), {})
+        tgt = matching.get("target_col", "TARGET")
+        cache = matching.get("cache_dir", args.cache_dir) or args.cache_dir
+        os.makedirs(cache, exist_ok=True)
+        print(f"[run_pipeline] (phase2) Saving balanced versions for processed file: {processed_fp} -> cache {cache}")
+        balanced_store = save_balanced_versions(processed_df, tgt, cache, random_state=matching.get("random_state", 42), persist_parquet=ent.get("persist_parquet", False))
+        all_balanced_store[processed_fp] = balanced_store
 
-    tuning_summary = tune_selected_models(chosen_fp, args.target_col, to_tune, args.trials, args.random_state, args.cache_dir)
+    # phase 3: run evaluations + tuning for each processed file (uses balanced files chosen by evaluation)
+    overall_results = {}
+    for ent in entries:
+        cfg_obj = process_df_mod.Config(**ent)
+        processed_fp = cfg_obj.output_parquet
+        cache = ent.get("cache_dir", args.cache_dir) or args.cache_dir
+        test_size = ent.get("test_size", 0.2)
+        random_state = ent.get("random_state", 42)
+        trials = ent.get("trials", 30)
+        print(f"[run_pipeline] (phase3) Evaluating processed file: {processed_fp}")
 
-    # Final summary in MLflow
-    mlflow.set_experiment(args.mlflow_experiment)
-    with mlflow.start_run(run_name=f"pipeline_{Path(processed_fp).stem}"):
-        mlflow.log_param("processed_parquet", processed_fp)
-        mlflow.log_param("selected_balance", best_balance)
-        mlflow.log_param("cache_dir", args.cache_dir)
-        mlflow.log_param("target_col", args.target_col)
-        mlflow.log_param("algo_results", json.dumps(algo_results or {}))
-        mlflow.log_param("df_eval", json.dumps(df_eval or {}))
-        mlflow.log_param("tuning_summary", json.dumps(tuning_summary or {}))
+        df_eval = eval_df_mod.evaluate_dataframe(processed_fp, target_col=cfg_obj.target_col, test_size=test_size, random_state=random_state, cache_dir=cache)
+        balanced_store = all_balanced_store.get(processed_fp, {})
+        best_balance = pick_best_balance(df_eval["metrics"])
+        chosen_df = balanced_store[best_balance]["df"]
+        print(f"[run_pipeline] Selected best balance '{best_balance}' -> {chosen_df}")
 
-    print("Pipeline finished.")
-    print("Processed:", processed_fp)
-    print("Best balance:", best_balance)
-    print("Algorithm results:", json.dumps(algo_results or {}, indent=2))
-    print("Tuning summary:", json.dumps(tuning_summary or {}, indent=2))
+        algo_results = eval_algo_mod.evaluate_algorithms(chosen_df, target_col=cfg_obj.target_col, test_size=test_size, random_state=random_state, cache_dir=cache, persist_parquet=ent.get("persist_parquet", False))
+
+        # choose models to tune from cfg (optional key) or auto-select
+        to_tune = ent.get("tune_models")
+        if not to_tune:
+            best_model = None
+            best_val = float("-inf")
+            for m, stats in (algo_results or {}).items():
+                try:
+                    val = float(stats.get("test_normalized_custom", stats.get("test_auc", -1.0)))
+                except Exception:
+                    val = float(stats.get("test_auc", -1.0))
+                if val > best_val:
+                    best_val = val
+                    best_model = m
+            to_tune = [best_model] if best_model else ["random_forest"]
+
+        # filter by available backends
+        available = {"logreg", "random_forest"}
+        try:
+            import xgboost  # noqa
+            available.add("xgboost")
+        except Exception:
+            pass
+        try:
+            import lightgbm  # noqa
+            available.add("lightgbm")
+        except Exception:
+            pass
+        to_tune = [m for m in (to_tune or []) if m and m in available]
+        if not to_tune:
+            to_tune = ["random_forest"]
+
+        tuning_summary = tune_selected_models(chosen_df, cfg_obj.target_col, to_tune, trials, random_state, cache)
+        overall_results[processed_fp] = {"df_eval": df_eval, "algo_results": algo_results, "tuning_summary": tuning_summary}
+        print(f"[run_pipeline] Completed entry for {processed_fp}")
+
+    print("[run_pipeline] Pipeline finished for all entries.")
+    # optionally persist overall_results to cache
+    out_summary = os.path.join(args.cache_dir, "pipeline_overall_results.json")
+    with open(out_summary, "w", encoding="utf8") as f:
+        json.dump(overall_results, f, indent=2)
+    print(f"[run_pipeline] Summary saved to {out_summary}")
+
 
 if __name__ == "__main__":
     main()
