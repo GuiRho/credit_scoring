@@ -1,3 +1,7 @@
+# --------------------
+# model_hyperparam_tuning.py
+
+
 import os
 from pathlib import Path
 import json
@@ -103,6 +107,25 @@ def _load_df(df_or_path):
         return df_or_path.copy()
     return pd.read_parquet(df_or_path, engine="pyarrow")
 
+def ensure_mlflow_from_env(cache_dir: str):
+    """
+    Use MLFLOW_TRACKING_URI if present (set by run_pipeline.configure_mlflow),
+    otherwise set a file:// URI under cache_dir (Path.as_uri() for Windows).
+    """
+    env_uri = os.environ.get("MLFLOW_TRACKING_URI")
+    if env_uri:
+        try:
+            mlflow.set_tracking_uri(env_uri)
+        except Exception:
+            pass
+        return mlflow.get_tracking_uri()
+    # fallback to file under cache_dir
+    try:
+        mlruns_dir = os.path.join(os.path.abspath(cache_dir), "mlruns")
+        mlflow.set_tracking_uri(Path(mlruns_dir).as_uri())
+    except Exception:
+        mlflow.set_tracking_uri(f"file://{os.path.abspath(cache_dir)}")
+    return mlflow.get_tracking_uri()
 
 def tune_model(df_or_path: str, model_name: str, target_col: str = "TARGET",
                n_trials: int = 50, random_state: int = 42, cache_dir: str = r"C:\Users\gui\Documents\OpenClassrooms\Projet 7\cache",

@@ -11,6 +11,8 @@
       "cache_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache",
       "target_col": "TARGET",
       "variance_threshold": 0.01,
+      "scale": true,
+      "scaler": "standard",
       "persist_parquet": false
     }
   ]
