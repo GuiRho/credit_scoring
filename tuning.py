@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 import mlflow
+from mlflow_utils import setup_mlflow
 import optuna
 from optuna.samplers import TPESampler
 
@@ -72,16 +73,7 @@ def _find_best_threshold_custom_score(y_true: np.ndarray, y_pred_proba: np.ndarr
     return best_t, best_score
 
 
-def setup_mlflow(cache_dir: str, experiment_name: str) -> None:
-    """Set up MLflow tracking URI and experiment."""
-    try:
-        mlruns_dir = os.path.join(os.path.abspath(cache_dir), "mlruns")
-        mlflow.set_tracking_uri(Path(mlruns_dir).as_uri())
-    except Exception as e:
-        logger.warning(f"Failed to set MLflow tracking URI: {e}")
-        mlflow.set_tracking_uri(f"file://{os.path.abspath(cache_dir)}")
-    
-    mlflow.set_experiment(experiment_name)
+
 
 
 def _run_grid_search_logreg(X_train: pd.DataFrame, y_train: pd.Series, 
@@ -289,7 +281,7 @@ def tune_and_log_model(config: Dict[str, Any], cache_dir: str, random_state: int
             artifact_path="model",
             signature=signature,
             input_example=input_example,
-            metadata={"best_threshold": best_threshold}
+            metadata={"best_threshold": float(best_threshold)}
         )
     
     logger.info(f"\n{'='*20} Tuning Complete {'='*20}")
@@ -303,7 +295,7 @@ def tune_and_log_model(config: Dict[str, Any], cache_dir: str, random_state: int
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Tune a model's hyperparameters using Optuna or GridSearchCV")
     parser.add_argument("--config", required=True, help="Path to the tuning_config.json file.")
-    parser.add_argument("--cache-dir", default="C:\Users\gui\Documents\OpenClassrooms\Projet 7\cache", help="Directory for MLflow runs.")
+    parser.add_argument("--cache-dir", default="C:/Users/gui/Documents/OpenClassrooms/Projet 7/cache", help="Directory for MLflow runs.")
     parser.add_argument("--random-state", type=int, default=42, help="Random state for reproducibility.")
     args = parser.parse_args()
 
@@ -320,7 +312,7 @@ if __name__ == "__main__":
         if field not in tuning_config:
             raise ValueError(f"Missing required field in config: {field}")
 
-    setup_mlflow(args.cache_dir, "Hyperparameter Tuning")
+    setup_mlflow(experiment_name="Hyperparameter Tuning", cache_dir=args.cache_dir)
     
     try:
         tune_and_log_model(config=tuning_config, cache_dir=args.cache_dir, random_state=args.random_state)

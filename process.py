@@ -8,6 +8,7 @@ import pandas as pd
 import joblib
 from sklearn.ensemble import RandomForestClassifier
 import mlflow
+from mlflow_utils import setup_mlflow
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
@@ -294,8 +295,7 @@ def main(config_path: str):
             evaluate_and_log(X_train, y_train, X_test, y_test, cfg.scaler)
 
 if __name__ == "__main__":
-    mlflow.set_tracking_uri("file:C:/Users/gui/Documents/OpenClassrooms/Projet 7/cache/mlruns")
-    mlflow.set_experiment("scale_and_feature_engineering")
+    setup_mlflow(experiment_name="scale_and_feature_engineering", cache_dir="C:/Users/gui/Documents/credit_scoring/cache")
 
     parser = argparse.ArgumentParser(description="Run feature engineering pipelines from a JSON config file.")
     parser.add_argument("--config", required=True, dest="config_path", help="Path to the process_config.json file")

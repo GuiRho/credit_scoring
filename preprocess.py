@@ -6,6 +6,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 import mlflow
+from mlflow_utils import setup_mlflow
 
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
@@ -211,8 +212,7 @@ def main(config_path: str):
 
 if __name__ == "__main__":
     # Setup MLflow experiment
-    mlflow.set_tracking_uri("file:C:/Users/gui/Documents/OpenClassrooms/Projet 7/cache/mlruns")
-    mlflow.set_experiment("preprocess")
+    setup_mlflow(experiment_name="preprocess", cache_dir="C:/Users/gui/Documents/credit_scoring/cache")
 
     parser = argparse.ArgumentParser(description="Run preprocessing pipelines from a JSON config file and log to MLflow.")
     parser.add_argument("--config", required=True, dest="config_path", help="Path to the preprocess_config.json file")

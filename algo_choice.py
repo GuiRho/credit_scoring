@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import mlflow
+from mlflow.models.signature import infer_signature
 import joblib
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -13,6 +14,7 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.svm import SVC
 from sklearn.metrics import roc_auc_score, accuracy_score, recall_score, confusion_matrix
 from imblearn.under_sampling import RandomUnderSampler
+from mlflow_utils import setup_mlflow
 
 # --- Optional Imports ---
 try:
@@ -73,14 +75,7 @@ def _find_best_threshold_custom_score(y_true, y_pred_proba, pos_proportion):
             best_t = t
     return best_t, best_score
 
-def setup_mlflow(cache_dir: str, experiment_name: str):
-    """Sets up MLflow tracking URI and experiment."""
-    try:
-        mlruns_dir = os.path.join(os.path.abspath(cache_dir), "mlruns")
-        mlflow.set_tracking_uri(Path(mlruns_dir).as_uri())
-    except Exception:
-        mlflow.set_tracking_uri(f"file://{os.path.abspath(cache_dir)}")
-    mlflow.set_experiment(experiment_name)
+
 
 # --- Main Evaluation Logic ---
 
@@ -103,6 +98,14 @@ def evaluate_algorithms(input_dir: str, target_col: str, cache_dir: str, random_
     y_train_orig = df_train[target_col]
     X_test = df_test.drop(columns=[target_col])
     y_test = df_test[target_col]
+    
+    # ==============================================================================
+    # --- ROBUSTNESS FIX: Convert all integer feature columns to float64 ---
+    # This prevents MLflow schema errors at inference time if data has NaNs.
+    # ==============================================================================
+    int_cols = X_train_orig.select_dtypes(include=['int32', 'int64']).columns
+    X_train_orig[int_cols] = X_train_orig[int_cols].astype('float64')
+    X_test[int_cols] = X_test[int_cols].astype('float64')
     
     pos_prop_global = float(y_train_orig.mean())
 
@@ -180,7 +183,7 @@ def evaluate_algorithms(input_dir: str, target_col: str, cache_dir: str, random_
                     artifact_path="model",
                     signature=signature,
                     input_example=input_example,
-                    metadata={"best_threshold": best_t}
+                    metadata={"best_threshold": float(best_t)}
                 )
 
                 print(f"  --> Run complete. Test AUC: {metrics['test_auc']:.4f}, Test Normalized Score: {metrics['test_normalized_custom_score']:.4f}")
@@ -197,7 +200,7 @@ if __name__ == "__main__":
     parser.add_argument("--random-state", type=int, default=42, help="Random state for reproducibility.")
     args = parser.parse_args()
 
-    setup_mlflow(args.cache_dir, "Algorithm Comparison")
+    setup_mlflow(experiment_name="Algorithm Comparison", cache_dir=args.cache_dir)
 
     for input_directory in args.input_dirs:
         try:
