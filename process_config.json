@@ -2,7 +2,7 @@
   {
     "run_name": "Select25_Cor50_Standard",
     "input_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\preprocessed_zero_80.parquet",
-    "output_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\processed__s25_c50_std",
+    "output_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\processed_s25_c50_std",
     "n_select": 25,
     "cor_val": 0.5,
     "scaler": "standard",
