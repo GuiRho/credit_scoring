@@ -1,0 +1,5 @@
+{
+  "dataset_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\processed_s100_c60_robust",
+  "model_name": "random_forest",
+  "n_trials": 5
+}
