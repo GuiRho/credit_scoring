@@ -1,10 +1,16 @@
 import os
 import json
 import argparse
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, asdict
+from typing import List
 import numpy as np
 import pandas as pd
+import mlflow
+
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
+from sklearn.preprocessing import StandardScaler
 
 # -------------------
 # Helper functions
@@ -16,6 +22,8 @@ def clean_and_impute_data(df, target_col='TARGET', completeness=85, impute='medi
     initial_rows = df_processed.shape[0]
     col_completeness = (1 - df_processed.isnull().sum() / len(df_processed)) * 100
     cols_to_drop_completeness = col_completeness[col_completeness < completeness].index.tolist()
+    if target_col in cols_to_drop_completeness:
+        cols_to_drop_completeness.remove(target_col)
     if cols_to_drop_completeness:
         df_processed.drop(columns=cols_to_drop_completeness, inplace=True)
         if verbose:
@@ -29,6 +37,9 @@ def clean_and_impute_data(df, target_col='TARGET', completeness=85, impute='medi
             print(f"Dropped {len(rows_to_drop_completeness)} rows due to completeness < {completeness*0.5}%")
             
     numerical_cols = df_processed.select_dtypes(include=np.number).columns.tolist()
+    if target_col in numerical_cols:
+        numerical_cols.remove(target_col)
+
     if impute == 'median':
         impute_value = df_processed[numerical_cols].median()
     elif impute == 'mean':
@@ -42,6 +53,9 @@ def clean_and_impute_data(df, target_col='TARGET', completeness=85, impute='medi
     
     if variance_threshold is not None and variance_threshold > 0:
         numerical_cols_after = df_processed.select_dtypes(include=np.number).columns.tolist()
+        if target_col in numerical_cols_after:
+            numerical_cols_after.remove(target_col)
+            
         if numerical_cols_after:
             variances = df_processed[numerical_cols_after].var()
             cols_to_drop_variance = variances[variances <= variance_threshold].index.tolist()
@@ -60,29 +74,78 @@ def clean_and_impute_data(df, target_col='TARGET', completeness=85, impute='medi
         
     return df_processed
 
-def remove_percent_outliers_2sides(df, percent):
+def remove_percent_outliers_2sides(df, percent, target_col='TARGET'):
     df_cleaned = df.copy()
-    for feat in df_cleaned.columns:
-        df_cleaned[feat] = pd.to_numeric(df_cleaned[feat], errors='coerce')
-    df_cleaned = df_cleaned.dropna()
     
-    if df_cleaned.empty:
-        return df_cleaned
+    # Exclude target column from outlier removal process
+    features = df_cleaned.drop(columns=[target_col], errors='ignore')
+    
+    for feat in features.columns:
+        features[feat] = pd.to_numeric(features[feat], errors='coerce')
+    
+    # Drop rows with NaNs that might have been coerced
+    features = features.dropna()
+    
+    if features.empty:
+        return df_cleaned.loc[features.index] # Return original df structure with no rows
         
-    all_outlier_indices = []
+    all_outlier_indices = set()
     lower_quantile = percent / 100
     upper_quantile = (100 - percent) / 100
     
-    for feat in df_cleaned.select_dtypes(include=[np.number]).columns:
-        lower_val = df_cleaned[feat].quantile(lower_quantile)
-        upper_val = df_cleaned[feat].quantile(upper_quantile)
-        outlier_rows = df_cleaned[(df_cleaned[feat] < lower_val) | (df_cleaned[feat] > upper_val)]
-        all_outlier_indices.extend(outlier_rows.index.tolist())
+    numeric_features = features.select_dtypes(include=[np.number])
+    for feat in numeric_features.columns:
+        lower_val = numeric_features[feat].quantile(lower_quantile)
+        upper_val = numeric_features[feat].quantile(upper_quantile)
+        outlier_rows = numeric_features[(numeric_features[feat] < lower_val) | (numeric_features[feat] > upper_val)]
+        all_outlier_indices.update(outlier_rows.index.tolist())
         
-    all_outlier_indices = list(set(all_outlier_indices))
-    print(f"Number of total outliers = {len(all_outlier_indices)}")
-    df_cleaned = df_cleaned.drop(index=all_outlier_indices)
+    print(f"Number of total outliers found = {len(all_outlier_indices)}")
+    df_cleaned = df_cleaned.drop(index=list(all_outlier_indices))
     return df_cleaned
+
+# -------------------
+# ML Evaluation
+# -------------------
+def evaluate_and_log(df: pd.DataFrame, target_col: str):
+    """Trains a logistic regression model and logs the ROC AUC score to MLflow."""
+    print("\n--- Starting Model Evaluation ---")
+    if target_col not in df.columns:
+        print(f"Target column '{target_col}' not found. Skipping evaluation.")
+        return
+
+    if df[target_col].nunique() < 2:
+        print(f"Target column '{target_col}' has only one class. Skipping evaluation.")
+        mlflow.log_metric("roc_auc", 0.0) # Log 0 or skip
+        return
+
+    X = df.drop(columns=[target_col])
+    y = df[target_col]
+
+    # Ensure all features are numeric for the model
+    X = X.select_dtypes(include=np.number)
+    
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    
+    # Scale features for better performance
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    
+    model = LogisticRegression(random_state=42, max_iter=1000)
+    model.fit(X_train_scaled, y_train)
+    
+    y_pred_proba = model.predict_proba(X_test_scaled)[:, 1]
+    
+    roc_auc = roc_auc_score(y_test, y_pred_proba)
+    print(f"ROC AUC Score: {roc_auc:.4f}")
+    
+    mlflow.log_metric("roc_auc", roc_auc)
+    mlflow.log_metrics({
+        "final_row_count": df.shape[0],
+        "final_feature_count": df.shape[1] - 1
+    })
+    print("--- Finished Model Evaluation ---\n")
 
 # -------------------
 # Config and Main
@@ -90,6 +153,7 @@ def remove_percent_outliers_2sides(df, percent):
 
 @dataclass
 class Config:
+    run_name: str
     input_parquet: str
     output_parquet: str
     completeness: int = 85
@@ -99,44 +163,60 @@ class Config:
     verbose: bool = True
     variance_threshold: float = 0.01
 
-def main(cfg: Config):
-    print("Loading data from:", cfg.input_parquet)
-    df = pd.read_parquet(cfg.input_parquet, engine='pyarrow')
-    
-    df_cleaned = clean_and_impute_data(
-        df, 
-        target_col=cfg.target_col, 
-        completeness=cfg.completeness, 
-        impute=cfg.impute, 
-        verbose=cfg.verbose, 
-        variance_threshold=cfg.variance_threshold
-    )
-    
-    df_cleaned = remove_percent_outliers_2sides(df_cleaned, percent=cfg.percent_outliers)
-    
-    print("Saving cleaned data to:", cfg.output_parquet)
-    df_cleaned.to_parquet(cfg.output_parquet, engine="pyarrow")
+def main(config_path: str):
+    with open(config_path, 'r') as f:
+        configs_data = json.load(f)
+
+    for config_dict in configs_data:
+        cfg = Config(**config_dict)
+        
+        print(f"=================================================")
+        print(f"Starting MLflow run: {cfg.run_name}")
+        print(f"=================================================")
+        
+        with mlflow.start_run(run_name=cfg.run_name):
+            # Log parameters from the config
+            mlflow.log_params(asdict(cfg))
+            
+            print("Loading data from:", cfg.input_parquet)
+            df = pd.read_parquet(cfg.input_parquet, engine='pyarrow')
+            
+            df_cleaned = clean_and_impute_data(
+                df, 
+                target_col=cfg.target_col, 
+                completeness=cfg.completeness, 
+                impute=cfg.impute, 
+                verbose=cfg.verbose, 
+                variance_threshold=cfg.variance_threshold
+            )
+            
+            df_processed = remove_percent_outliers_2sides(df_cleaned, percent=cfg.percent_outliers, target_col=cfg.target_col)
+            
+            print("Saving processed data to:", cfg.output_parquet)
+            # Ensure the output directory exists
+            output_dir = os.path.dirname(cfg.output_parquet)
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+            df_processed.to_parquet(cfg.output_parquet, engine="pyarrow")
+            
+            # Log the processed dataset as an artifact
+            mlflow.log_artifact(cfg.output_parquet, "processed_data")
+            
+            # Log additional parameters
+            mlflow.log_param("nrow", df_processed.shape[0])
+            mlflow.log_param("ncol", df_processed.shape[1])
+
+            # Evaluate this dataset and log metrics
+            evaluate_and_log(df_processed, target_col=cfg.target_col)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Preprocess data: clean, impute, and remove outliers.")
-    parser.add_argument("--input", required=True, dest="input_parquet", help="Input parquet path")
-    parser.add_argument("--output", required=True, dest="output_parquet", help="Output processed parquet path")
-    parser.add_argument("--completeness", type=int, default=85)
-    parser.add_argument("--impute", type=str, default="median", choices=["median", "mean", "zero"])
-    parser.add_argument("--percent_outliers", type=int, default=1)
-    parser.add_argument("--target", dest="target_col", default="TARGET")
-    parser.add_argument("--variance-threshold", dest="variance_threshold", type=float, default=0.01)
+    # Setup MLflow experiment
+    mlflow.set_tracking_uri("file:C:/Users/gui/Documents/OpenClassrooms/Projet 7/cache/mlruns")
+    mlflow.set_experiment("preprocess")
+
+    parser = argparse.ArgumentParser(description="Run preprocessing pipelines from a JSON config file and log to MLflow.")
+    parser.add_argument("--config", required=True, dest="config_path", help="Path to the preprocess_config.json file")
     
     args = parser.parse_args()
     
-    config = Config(
-        input_parquet=args.input_parquet,
-        output_parquet=args.output_parquet,
-        completeness=args.completeness,
-        impute=args.impute,
-        percent_outliers=args.percent_outliers,
-        target_col=args.target_col,
-        variance_threshold=args.variance_threshold
-    )
-    
-    main(config)
+    main(args.config_path)

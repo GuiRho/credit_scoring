@@ -1,0 +1,32 @@
+[
+  {
+    "run_name": "Select25_Cor50_Standard",
+    "input_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\preprocessed_zero_80.parquet",
+    "output_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\processed__s25_c50_std",
+    "n_select": 25,
+    "cor_val": 0.5,
+    "scaler": "standard",
+    "target_col": "TARGET",
+    "cache_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\feng_cache"
+  },
+  {
+    "run_name": "Select30_Cor55_Standard",
+    "input_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\preprocessed_zero_80.parquet",
+    "output_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\processed_s30_c55_std",
+    "n_select": 30,
+    "cor_val": 0.55,
+    "scaler": "standard",
+    "target_col": "TARGET",
+    "cache_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\feng_cache"
+  },
+  {
+    "run_name": "Select35_Cor60_Standard",
+    "input_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\preprocessed_zero_80.parquet",
+    "output_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\processed_s35_c60_std",
+    "n_select": 35,
+    "cor_val": 0.6,
+    "scaler": "standard",
+    "target_col": "TARGET",
+    "cache_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\feng_cache"
+  }
+]

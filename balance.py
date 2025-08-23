@@ -232,4 +232,4 @@ if __name__ == "__main__":
     parser.add_argument("--target-balance", type=float, default=0.5, help="Target balance for the positive class")
     args = parser.parse_args()
     res = evaluate_dataframe(args.input, target_col=args.target, cache_dir=args.cache_dir, target_balance=args.target_balance)
-    print(json.dumps(res, indent=2))
+    print(json.dumps(res["metrics"], indent=2))
