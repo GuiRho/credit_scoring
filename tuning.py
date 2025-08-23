@@ -303,7 +303,7 @@ def tune_and_log_model(config: Dict[str, Any], cache_dir: str, random_state: int
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Tune a model's hyperparameters using Optuna or GridSearchCV")
     parser.add_argument("--config", required=True, help="Path to the tuning_config.json file.")
-    parser.add_argument("--cache-dir", default="cache", help="Directory for MLflow runs.")
+    parser.add_argument("--cache-dir", default="C:\Users\gui\Documents\OpenClassrooms\Projet 7\cache", help="Directory for MLflow runs.")
     parser.add_argument("--random-state", type=int, default=42, help="Random state for reproducibility.")
     args = parser.parse_args()
 

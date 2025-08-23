@@ -172,10 +172,16 @@ def evaluate_algorithms(input_dir: str, target_col: str, cache_dir: str, random_
                 
                 mlflow.log_metrics(metrics)
                 
-                model_fp = os.path.join(cache_dir, "models", f"model_{run_name}.joblib")
-                os.makedirs(os.path.dirname(model_fp), exist_ok=True)
-                joblib.dump(pipe, model_fp)
-                mlflow.log_artifact(model_fp, artifact_path="models")
+                # Log model using mlflow.sklearn.log_model
+                input_example = X_train.head(5)
+                signature = infer_signature(input_example, pipe.predict_proba(input_example))
+                mlflow.sklearn.log_model(
+                    sk_model=pipe,
+                    artifact_path="model",
+                    signature=signature,
+                    input_example=input_example,
+                    metadata={"best_threshold": best_t}
+                )
 
                 print(f"  --> Run complete. Test AUC: {metrics['test_auc']:.4f}, Test Normalized Score: {metrics['test_normalized_custom_score']:.4f}")
 
@@ -187,7 +193,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train and evaluate multiple algorithms on multiple datasets and balancing strategies.")
     parser.add_argument("--input-dirs", required=True, nargs='+', help="One or more paths to directories containing train_processed.parquet and test_processed.parquet.")
     parser.add_argument("--target", default="TARGET", help="Name of the target column.")
-    parser.add_argument("--cache-dir", default="cache", help="Directory for MLflow runs and model artifacts.")
+    parser.add_argument("--cache-dir", default="C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache", help="Directory for MLflow runs and model artifacts.")
     parser.add_argument("--random-state", type=int, default=42, help="Random state for reproducibility.")
     args = parser.parse_args()
 
