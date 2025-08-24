@@ -25,6 +25,10 @@ def clean_and_impute_data(
     Clean and impute data, dropping columns with low completeness or low coefficient of variation (CV).
     """
     df_processed = df.copy()
+
+    # Convert boolean columns to int (0 or 1)
+    for col in df_processed.select_dtypes(include='bool').columns:
+        df_processed[col] = df_processed[col].astype(int)
     initial_cols = df_processed.shape[1]
     initial_rows = df_processed.shape[0]
 

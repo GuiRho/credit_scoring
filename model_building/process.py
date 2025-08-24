@@ -8,7 +8,6 @@ import pandas as pd
 import joblib
 from sklearn.ensemble import RandomForestClassifier
 import mlflow
-from mlflow_utils import setup_mlflow
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
@@ -295,7 +294,12 @@ def main(config_path: str):
             evaluate_and_log(X_train, y_train, X_test, y_test, cfg.scaler)
 
 if __name__ == "__main__":
-    setup_mlflow(experiment_name="scale_and_feature_engineering", cache_dir="C:/Users/gui/Documents/credit_scoring/cache")
+    # Set tracking URI to the desired cache directory
+    # Note the use of file:/// and url-encoding for the path
+    tracking_uri = "file:///C:/Users/gui/Documents/OpenClassrooms/Projet%207/cache/mlruns"
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment("process")
+    print(f"MLflow is configured to track experiments to: {mlflow.get_tracking_uri()}")
 
     parser = argparse.ArgumentParser(description="Run feature engineering pipelines from a JSON config file.")
     parser.add_argument("--config", required=True, dest="config_path", help="Path to the process_config.json file")

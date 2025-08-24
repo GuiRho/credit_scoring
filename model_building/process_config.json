@@ -1,0 +1,42 @@
+[
+  {
+    "run_name": "Select40_Cor70_Robust",
+    "input_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\preprocessed_median_85_comp_0p5_outlier_0p05_cv.parquet",
+    "output_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\processed_s40_c70_robust",
+    "n_select": 40,
+    "cor_val": 0.7,
+    "scaler": "robust",
+    "target_col": "TARGET",
+    "cache_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\feng_cache"
+  },
+  {
+    "run_name": "Select60_Cor65_Robust",
+    "input_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\preprocessed_median_85_comp_0p5_outlier_0p05_cv.parquet",
+    "output_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\processed_s60_c65_robust",
+    "n_select": 60,
+    "cor_val": 0.65,
+    "scaler": "robust",
+    "target_col": "TARGET",
+    "cache_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\feng_cache"
+  },
+  {
+    "run_name": "Select80_Cor60_Robust",
+    "input_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\preprocessed_median_85_comp_0p5_outlier_0p05_cv.parquet",
+    "output_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\processed_s80_c60_robust",
+    "n_select": 80,
+    "cor_val": 0.6,
+    "scaler": "robust",
+    "target_col": "TARGET",
+    "cache_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\feng_cache"
+  },
+  {
+    "run_name": "Select100_Cor60_Robust",
+    "input_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\preprocessed_median_85_comp_0p5_outlier_0p05_cv.parquet",
+    "output_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\processed_s100_c60_robust",
+    "n_select": 100,
+    "cor_val": 0.6,
+    "scaler": "robust",
+    "target_col": "TARGET",
+    "cache_dir": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\feng_cache"
+  }
+]

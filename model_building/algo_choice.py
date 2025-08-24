@@ -14,7 +14,7 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.svm import SVC
 from sklearn.metrics import roc_auc_score, accuracy_score, recall_score, confusion_matrix
 from imblearn.under_sampling import RandomUnderSampler
-from mlflow_utils import setup_mlflow
+
 
 # --- Optional Imports ---
 try:
@@ -109,7 +109,7 @@ def evaluate_algorithms(input_dir: str, target_col: str, cache_dir: str, random_
     
     pos_prop_global = float(y_train_orig.mean())
 
-    target_balances = ['init', 0.25, 0.50]
+    target_balances = ['init', 0.11, 0.15]
     for balance in target_balances:
         print(f"\n--- Applying Balance Strategy: {balance} ---")
         X_train, y_train = X_train_orig.copy(), y_train_orig.copy()
@@ -200,7 +200,11 @@ if __name__ == "__main__":
     parser.add_argument("--random-state", type=int, default=42, help="Random state for reproducibility.")
     args = parser.parse_args()
 
-    setup_mlflow(experiment_name="Algorithm Comparison", cache_dir=args.cache_dir)
+    # Set tracking URI to the desired cache directory
+    tracking_uri = "file:///C:/Users/gui/Documents/OpenClassrooms/Projet%207/cache/mlruns"
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment("Algorithm Comparison")
+    print(f"MLflow is configured to track experiments to: {mlflow.get_tracking_uri()}")
 
     for input_directory in args.input_dirs:
         try:

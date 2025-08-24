@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 import mlflow
-from mlflow_utils import setup_mlflow
+
 import optuna
 from optuna.samplers import TPESampler
 
@@ -168,7 +168,7 @@ def get_optuna_suggest_and_model(model_name: str, random_state: int) -> Tuple[Ca
         raise ValueError(f"Unsupported or unavailable model: {model_name}")
 
 
-def tune_and_log_model(config: Dict[str, Any], cache_dir: str, random_state: int) -> None:
+def tune_and_log_model(config: Dict[str, Any], cache_dir: str, random_state: int, register_as: Optional[str] = None) -> None:
     """Main function to tune and log model using either GridSearchCV or Optuna."""
     # Load and prepare data
     input_dir, model_name, n_trials, target_col = config['dataset_dir'], config['model_name'], config.get('n_trials'), 'TARGET'
@@ -184,7 +184,6 @@ def tune_and_log_model(config: Dict[str, Any], cache_dir: str, random_state: int
     df_train = pd.read_parquet(train_path)
     df_test = pd.read_parquet(test_path)
     
-    # Validate that target column exists
     if target_col not in df_train.columns or target_col not in df_test.columns:
         raise ValueError(f"Target column '{target_col}' not found in data")
     
@@ -192,21 +191,31 @@ def tune_and_log_model(config: Dict[str, Any], cache_dir: str, random_state: int
     y_train = df_train[target_col]
     X_test = df_test.drop(columns=[target_col]).select_dtypes(include=np.number)
     y_test = df_test[target_col]
+
+    # --- ROBUSTNESS FIX: Convert integer columns to float64 ---
+    int_cols = X_train.select_dtypes(include=['int32', 'int64']).columns
+    if len(int_cols) > 0:
+        logger.info(f"Converting {len(int_cols)} integer columns to float64 to prevent schema errors.")
+        X_train[int_cols] = X_train[int_cols].astype('float64')
+        X_test[int_cols] = X_test[int_cols].astype('float64')
+    # -----------------------------------------------------------
     
     pos_prop_global = float(y_train.mean())
 
-    # Select tuning strategy
     if model_name == 'logreg':
+        # ... (GridSearch logic remains the same)
         final_pipeline, best_params, best_cv_score = _run_grid_search_logreg(
             X_train, y_train, pos_prop_global, random_state
         )
     else:
+        # ... (Optuna logic remains the same)
         if not n_trials:
             raise ValueError("'n_trials' must be set in config for Optuna models.")
         
         suggest_params, base_model = get_optuna_suggest_and_model(model_name, random_state)
         
         def objective(trial: optuna.Trial) -> float:
+            # (Objective function is unchanged)
             params = suggest_params(trial)
             try:
                 model = base_model.set_params(**params)
@@ -233,7 +242,7 @@ def tune_and_log_model(config: Dict[str, Any], cache_dir: str, random_state: int
                 raise optuna.exceptions.TrialPruned()
 
         study = optuna.create_study(direction="maximize", sampler=TPESampler(seed=random_state))
-        study.optimize(objective, n_trials=n_trials, n_jobs=1)  # Set n_jobs=1 to avoid conflicts
+        study.optimize(objective, n_trials=n_trials, n_jobs=1)
         
         best_params = study.best_params
         best_cv_score = study.best_value
@@ -253,7 +262,9 @@ def tune_and_log_model(config: Dict[str, Any], cache_dir: str, random_state: int
     
     # Log to MLflow
     run_name = f"tune_{model_name}_{Path(input_dir).name}"
-    with mlflow.start_run(run_name=run_name):
+    
+    # --- HERE IS THE FIX ---
+    with mlflow.start_run(run_name=run_name) as run: # <-- Added 'as run'
         mlflow.log_params(config)
         mlflow.log_params({f"best_{k}": v for k, v in best_params.items()})
         mlflow.log_metrics({
@@ -262,8 +273,7 @@ def tune_and_log_model(config: Dict[str, Any], cache_dir: str, random_state: int
             "test_custom_score": test_custom,
             "best_threshold": best_threshold,
         })
-        
-        # Log confusion matrix
+        mlflow.log_param("best_threshold", best_threshold)
         fig, ax = plt.subplots(figsize=(8, 6))
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
         ax.set_title('Confusion Matrix (Test Set)')
@@ -272,7 +282,6 @@ def tune_and_log_model(config: Dict[str, Any], cache_dir: str, random_state: int
         mlflow.log_figure(fig, "confusion_matrix.png")
         plt.close(fig)
         
-        # Log model
         input_example = X_train.head(5)
         signature = infer_signature(input_example, final_pipeline.predict_proba(input_example))
         
@@ -283,6 +292,16 @@ def tune_and_log_model(config: Dict[str, Any], cache_dir: str, random_state: int
             input_example=input_example,
             metadata={"best_threshold": float(best_threshold)}
         )
+
+        # Now this part will work correctly
+        if register_as:
+            run_id = run.info.run_id
+            model_uri = f"runs:/{run_id}/model"
+            logger.info(f"Registering model '{register_as}' from URI: {model_uri}")
+            # Use registered_model_name for clarity
+            mlflow.register_model(model_uri=model_uri, name=register_as)
+            logger.info("Model registration complete.")
+        # --- END OF NEW CODE ---
     
     logger.info(f"\n{'='*20} Tuning Complete {'='*20}")
     logger.info(f"Tuning method: {'GridSearchCV' if model_name == 'logreg' else 'Optuna'}")
@@ -297,6 +316,7 @@ if __name__ == "__main__":
     parser.add_argument("--config", required=True, help="Path to the tuning_config.json file.")
     parser.add_argument("--cache-dir", default="C:/Users/gui/Documents/OpenClassrooms/Projet 7/cache", help="Directory for MLflow runs.")
     parser.add_argument("--random-state", type=int, default=42, help="Random state for reproducibility.")
+    parser.add_argument("--register-as", help="Register the best model with this name in the MLflow registry.")
     args = parser.parse_args()
 
     # Validate config file exists
@@ -312,10 +332,19 @@ if __name__ == "__main__":
         if field not in tuning_config:
             raise ValueError(f"Missing required field in config: {field}")
 
-    setup_mlflow(experiment_name="Hyperparameter Tuning", cache_dir=args.cache_dir)
+    # Set tracking URI to the desired cache directory
+    tracking_uri = "file:///C:/Users/gui/Documents/OpenClassrooms/Projet%207/cache/mlruns"
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment("Hyperparameter Tuning")
+    print(f"MLflow is configured to track experiments to: {mlflow.get_tracking_uri()}")
     
     try:
-        tune_and_log_model(config=tuning_config, cache_dir=args.cache_dir, random_state=args.random_state)
+        tune_and_log_model(
+            config=tuning_config, 
+            cache_dir=args.cache_dir, 
+            random_state=args.random_state,
+            register_as=args.register_as
+        )
     except Exception as e:
         logger.error(f"Tuning failed with error: {e}")
         raise
