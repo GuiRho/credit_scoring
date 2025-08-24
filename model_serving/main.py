@@ -100,6 +100,7 @@ def read_root():
 
 @app.post("/predict", response_model=PredictionResponse, tags=["Predictions"])
 def predict(client_id: str, data: ClientData):
+    print(f"Received features keys: {list(data.features.keys())}")  # Debug print
     if not model or not EXPECTED_FEATURES:
         raise HTTPException(status_code=503, detail="Model is not available. Please check server logs.")
 

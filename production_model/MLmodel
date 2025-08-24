@@ -1,0 +1,74 @@
+artifact_path: file:///C:/Users/gui/Documents/OpenClassrooms/Projet%207/cache/mlruns/340325735939904829/models/m-1b4e05ef2bf7467580de5e979f1c3c0f/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.12.11
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.7.1
+is_signature_from_type_hint: false
+metadata:
+  best_threshold: 0.13
+mlflow_version: 3.3.0
+model_id: m-1b4e05ef2bf7467580de5e979f1c3c0f
+model_size_bytes: 40753720
+model_uuid: m-1b4e05ef2bf7467580de5e979f1c3c0f
+prompts: null
+run_id: 331bbe8b5b33440495785e49b4eb24e7
+saved_input_example_info:
+  artifact_path: input_example.json
+  pandas_orient: split
+  serving_input_path: serving_input_example.json
+  type: dataframe
+signature:
+  inputs: '[{"type": "double", "name": "AMT_ANNUITY", "required": true}, {"type":
+    "double", "name": "ANNUITY_INCOME_PERC", "required": true}, {"type": "double",
+    "name": "APPROVED_APP_CREDIT_PERC_MAX", "required": true}, {"type": "double",
+    "name": "BURO_AMT_CREDIT_SUM_DEBT_SUM", "required": true}, {"type": "double",
+    "name": "BURO_AMT_CREDIT_SUM_MEDIAN", "required": true}, {"type": "double", "name":
+    "BURO_DAYS_CREDIT_MAX", "required": true}, {"type": "double", "name": "CODE_GENDER",
+    "required": true}, {"type": "double", "name": "DAYS_ID_PUBLISH", "required": true},
+    {"type": "double", "name": "DAYS_LAST_PHONE_CHANGE", "required": true}, {"type":
+    "double", "name": "DAYS_REGISTRATION", "required": true}, {"type": "double", "name":
+    "EXT_SOURCE_2", "required": true}, {"type": "double", "name": "FLAG_DOCUMENT_3",
+    "required": true}, {"type": "double", "name": "INCOME_PER_PERSON", "required":
+    true}, {"type": "double", "name": "INSTAL_AMT_PAYMENT_MEDIAN", "required": true},
+    {"type": "double", "name": "INSTAL_AMT_PAYMENT_MIN", "required": true}, {"type":
+    "double", "name": "INSTAL_DAYS_ENTRY_PAYMENT_MAX", "required": true}, {"type":
+    "double", "name": "INSTAL_DAYS_ENTRY_PAYMENT_MEDIAN", "required": true}, {"type":
+    "double", "name": "INSTAL_DBD_MEAN", "required": true}, {"type": "double", "name":
+    "NAME_EDUCATION_TYPE_Secondary / secondary special", "required": true}, {"type":
+    "double", "name": "NAME_INCOME_TYPE_Working", "required": true}, {"type": "double",
+    "name": "OCCUPATION_TYPE_Laborers", "required": true}, {"type": "double", "name":
+    "PAYMENT_RATE", "required": true}, {"type": "double", "name": "PREV_AMT_ANNUITY_MIN",
+    "required": true}, {"type": "double", "name": "PREV_APP_CREDIT_PERC_MEDIAN", "required":
+    true}, {"type": "double", "name": "PREV_CNT_PAYMENT_MEAN", "required": true},
+    {"type": "double", "name": "PREV_CODE_REJECT_REASON_LIMIT_MEAN", "required": true},
+    {"type": "double", "name": "PREV_CODE_REJECT_REASON_SCOFR_MEAN", "required": true},
+    {"type": "double", "name": "PREV_DAYS_DECISION_MAX", "required": true}, {"type":
+    "double", "name": "PREV_HOUR_APPR_PROCESS_START_MEAN", "required": true}, {"type":
+    "double", "name": "PREV_NAME_CONTRACT_STATUS_Refused_MEAN", "required": true},
+    {"type": "double", "name": "PREV_NAME_CONTRACT_TYPE_Revolving loans_MEAN", "required":
+    true}, {"type": "double", "name": "PREV_NAME_PRODUCT_TYPE_walk-in_MEAN", "required":
+    true}, {"type": "double", "name": "PREV_NAME_YIELD_GROUP_low_normal_MEAN", "required":
+    true}, {"type": "double", "name": "PREV_PRODUCT_COMBINATION_Cash X-Sell: high_MEAN",
+    "required": true}, {"type": "double", "name": "REGION_POPULATION_RELATIVE", "required":
+    true}, {"type": "double", "name": "REGION_RATING_CLIENT_W_CITY", "required": true},
+    {"type": "double", "name": "REG_CITY_NOT_LIVE_CITY", "required": true}, {"type":
+    "double", "name": "REG_CITY_NOT_WORK_CITY", "required": true}, {"type": "double",
+    "name": "BURO_DAYS_CREDIT_ENDDATE_MEAN_pow0_5", "required": true}, {"type": "double",
+    "name": "BURO_DAYS_CREDIT_MEAN_pow0_5", "required": true}, {"type": "double",
+    "name": "DAYS_BIRTH_pow2", "required": true}, {"type": "double", "name": "SK_ID_CURR_pow2",
+    "required": true}]'
+  outputs: '[{"type": "tensor", "tensor-spec": {"dtype": "float64", "shape": [-1,
+    2]}}]'
+  params: null
+type_hint_from_example: false
+utc_time_created: '2025-08-24 18:39:18.961432'
