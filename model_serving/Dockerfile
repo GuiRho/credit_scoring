@@ -20,7 +20,8 @@ EXPOSE 8000
 
 # Define environment variable for MLflow tracking URI
 # This is crucial for the API to fetch the run parameters
-ENV MLFLOW_TRACKING_URI="file:///C:/Users/gui/Documents/OpenClassrooms/Projet%207/cache/mlruns"
+# ENV MLFLOW_TRACKING_URI="file:///C:/Users/gui/Documents/OpenClassrooms/Projet%207/cache/mlruns" #uncommented for cloud deployment deploy
+
 
 # Run uvicorn server
 # Use 0.0.0.0 to listen on all network interfaces
