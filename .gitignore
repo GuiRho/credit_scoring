@@ -16,4 +16,4 @@ mlflow_artifact/
 Thumbs.db
 
 # Data
-*.parquet
+*.parquetgcp-credentials.json
