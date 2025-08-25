@@ -17,3 +17,4 @@ Thumbs.db
 
 # Data
 *.parquetgcp-credentials.json
+gcp-credentials.json

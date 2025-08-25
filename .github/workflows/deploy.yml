@@ -1,0 +1,57 @@
+name: Build and Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main # This workflow runs on every push to the main branch
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: europe-west1
+  REPO_NAME: credit-scoring-repo
+
+jobs:
+  build-and-deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: 'google-github-actions/auth@v2'
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+
+      # --- Build, Push, and Deploy API ---
+      - name: Build API Image
+        run: docker build -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/credit-scoring-api:${{ github.sha }} -f model_serving/Dockerfile .
+
+      - name: Push API Image
+        run: docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/credit-scoring-api:${{ github.sha }}
+
+      - name: Deploy API Service
+        run: |
+          gcloud run deploy credit-scoring-api \
+            --image=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/credit-scoring-api:${{ github.sha }} \
+            --region=${{ env.REGION }} \
+            --allow-unauthenticated
+
+      # --- Build, Push, and Deploy UX ---
+      - name: Build UX Image
+        run: docker build -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/credit-scoring-ux:${{ github.sha }} -f ux/Dockerfile .
+
+      - name: Push UX Image
+        run: docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/credit-scoring-ux:${{ github.sha }}
+
+      - name: Deploy UX Service
+        run: |
+          gcloud run deploy credit-scoring-ux \
+            --image=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/credit-scoring-ux:${{ github.sha }} \
+            --region=${{ env.REGION }} \
+            --allow-unauthenticated \
+            --set-env-vars="API_URL=https://credit-scoring-api-257261936398.europe-west1.run.app"
