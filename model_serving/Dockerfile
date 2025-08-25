@@ -1,24 +1,20 @@
-# FIX 1: Use a Python version that matches your model's environment
+# Use a consistent Python version
 FROM python:3.12-slim
 
 # Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements files
+# COPY files from the build context (the project root) into the container
 COPY model_serving/requirements.txt ./requirements.txt
 COPY production_model/requirements.txt ./model_requirements.txt
-
-# Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt -r model_requirements.txt
 
-# Copy the application code
+# COPY the application code and model from the project root
 COPY model_serving/docker_main.py .
-
-# FIX 2: Correctly copy the entire model directory to a folder named "model"
 COPY production_model/ ./model/
 
-# Expose the port Cloud Run will use
+# Expose the port Cloud Run uses
 EXPOSE 8080
 
-# Run the application (use an array to avoid shell issues, PORT is set by Cloud Run)
+# The command to start the server
 CMD ["uvicorn", "docker_main:app", "--host", "0.0.0.0", "--port", "8080"]

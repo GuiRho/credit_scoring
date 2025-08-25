@@ -8,7 +8,7 @@ WORKDIR /app
 COPY ux/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# COPY the app code from the build context into the container
+# COPY the app code from the project root into the container
 COPY ux/app.py .
 
 # Expose the port Cloud Run uses
