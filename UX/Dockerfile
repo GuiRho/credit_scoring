@@ -4,11 +4,12 @@ FROM python:3.12-slim
 # Set the working directory inside the container
 WORKDIR /app
 
-# The paths are now simple because the build will happen from within the 'ux' folder
-COPY requirements.txt ./requirements.txt
+# COPY files from the build context (the project root) into the container
+COPY ux/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py .
+# COPY the app code from the build context into the container
+COPY ux/app.py .
 
 # Expose the port Cloud Run uses
 EXPOSE 8080
