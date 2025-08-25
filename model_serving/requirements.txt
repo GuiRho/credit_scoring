@@ -1,8 +1,6 @@
 fastapi
-uvicorn[standard]
+uvicorn
 pandas
 mlflow
-scikit-learn
-# Add other libraries your model might need, e.g., xgboost, lightgbm
-# xgboost
-# lightgbm
+pydantic
+PyYAML

@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 import json
 import numpy as np
+import os
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -12,7 +13,8 @@ st.set_page_config(
 )
 
 # --- API Configuration ---
-API_URL = "http://127.0.0.1:8000"
+# Get the API URL from the environment variable set by Cloud Run
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000") 
 PREDICT_ENDPOINT = f"{API_URL}/predict"
 
 # --- Expected Features (from the error message) ---

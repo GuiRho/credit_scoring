@@ -1,81 +1,75 @@
-""""
-separate main file for the Docker deployment that loads the model from the packaged folder
-
-Create a copy of model_serving/main.py and name it model_serving/docker_main.py.
-Modify docker_main.py to load the model from the local /model directory (which is where we'll place it in the Docker container).
-
-Note: This docker_main.py still needs to connect to your MLflow server to get the run parameters. We will address this in the Dockerfile.
-"""""
-
 import pandas as pd
 import mlflow
+import yaml  # <-- Import the YAML library
+from pathlib import Path  # <-- Import Path for robust file handling
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any
 
-# --- CONFIGURATION ---
-# Define the name of the model in the MLflow Model Registry
-MODEL_NAME = "credit_scoring" # You used "credit_scoring"
+# --- CONFIGURATION (No changes) ---
+MODEL_NAME = "credit_scoring"
 MODEL_STAGE = "Production"
 
-# Set the MLflow tracking URI
-tracking_uri = "file:///C:/Users/gui/Documents/OpenClassrooms/Projet%207/cache/mlruns"
-mlflow.set_tracking_uri(tracking_uri)
-
-# --- GLOBAL VARIABLES ---
+# --- GLOBAL VARIABLES (No changes) ---
 model = None
 BEST_THRESHOLD = 0.5
 EXPECTED_FEATURES = []
-# --- NEW MODEL LOADING LOGIC FOR DOCKER ---
+
+# --- NEW, ROBUST MODEL LOADING LOGIC ---
 def load_packaged_model():
-    """Loads the model, threshold, and features from a local directory."""
+    """
+    Loads the model and its metadata by directly parsing the MLmodel file.
+    This is fully self-contained and has no dependency on the MLflow tracking client.
+    """
     global model, BEST_THRESHOLD, EXPECTED_FEATURES
     
-    # In Docker, the model will be at a fixed path '/model'
-    model_path = "/model" 
-    
+    model_path = Path("model")
+    mlmodel_path = model_path / "MLmodel"
+
     try:
-        # Load the model from the local directory
-        model = mlflow.pyfunc.load_model(model_path)
+        # 1. Load the model for making predictions
+        model = mlflow.pyfunc.load_model(str(model_path))
         
-        # Get metadata from the MLmodel file in that directory
-        model_info = mlflow.models.get_model_info(model_path)
+        # 2. Manually parse the MLmodel YAML file for metadata
+        with open(mlmodel_path, 'r') as f:
+            mlmodel_data = yaml.safe_load(f)
 
-        # Get the threshold from the run parameters linked in the model
-        client = mlflow.tracking.MlflowClient()
-        run_id = model_info.run_id
-        run_data = client.get_run(run_id).data
-        
-        threshold_str = run_data.params.get("best_threshold")
-        if threshold_str:
-            BEST_THRESHOLD = float(threshold_str)
+        # 3. Get the threshold from the custom metadata
+        custom_metadata = mlmodel_data.get("metadata", {})
+        if 'best_threshold' in custom_metadata:
+            BEST_THRESHOLD = float(custom_metadata['best_threshold'])
         else:
-            raise RuntimeError("'best_threshold' parameter not found in the model's associated run.")
-            
-        if model_info.signature:
-            EXPECTED_FEATURES = [spec.name for spec in model_info.signature.inputs]
-        else:
-            raise RuntimeError("Model signature not found.")
+            raise RuntimeError("'best_threshold' not found in MLmodel custom metadata.")
 
-        print("--- Packaged model loaded successfully ---")
+        # 4. Get expected features from the signature
+        signature = mlmodel_data.get("signature", {})
+        if signature and 'inputs' in signature:
+            # The input is a JSON string, so we need to parse it
+            inputs_list = yaml.safe_load(signature['inputs'])
+            EXPECTED_FEATURES = [spec['name'] for spec in inputs_list]
+        else:
+            raise RuntimeError("Model signature not found in MLmodel.")
+
+        print("--- Packaged model loaded successfully (Direct YAML Parse) ---")
         print(f"Model path: {model_path}")
-        print(f"Run ID: {run_id}")
         print(f"Best Threshold: {BEST_THRESHOLD}")
-        print("------------------------------------------")
+        print(f"Model expects {len(EXPECTED_FEATURES)} features.")
+        print("---------------------------------------------------------")
 
     except Exception as e:
+        # This will print the exact error to Cloud Run logs for easier debugging
         print(f"FATAL: Error loading packaged model: {e}")
-        exit()
+        # The exit() call ensures the container stops if the model can't be loaded
+        exit(1)
 
 
-# --- API DEFINITION ---
+# --- API DEFINITION (No changes) ---
 app = FastAPI(
     title="Credit Scoring API",
     description="API to predict client credit default probability from the production model.",
-    version="1.1.0" # Version bump!
+    version="1.2.0" # Version bump!
 )
 
-# Pydantic models (no changes here)
 class ClientData(BaseModel):
     features: Dict[str, Any]
 
@@ -85,34 +79,26 @@ class PredictionResponse(BaseModel):
     prediction: int
     threshold: float
 
-#  the startup event call the new function
 @app.on_event("startup")
 async def startup_event():
     load_packaged_model()
 
-
-# The rest of your main.py remains the same!
 @app.get("/", tags=["Health Check"])
 def read_root():
     return {"status": "API is running", "model_loaded": model is not None}
 
 @app.post("/predict", response_model=PredictionResponse, tags=["Predictions"])
 def predict(client_id: str, data: ClientData):
-    print(f"Received features keys: {list(data.features.keys())}")  # Debug print
     if not model or not EXPECTED_FEATURES:
         raise HTTPException(status_code=503, detail="Model is not available. Please check server logs.")
-
     try:
         input_df = pd.DataFrame([data.features])
         missing_features = set(EXPECTED_FEATURES) - set(input_df.columns)
         if missing_features:
             raise ValueError(f"Missing required features: {list(missing_features)}")
-        
         input_df = input_df[EXPECTED_FEATURES]
-        
         probability = model.predict(input_df)[0][1]
         prediction = 1 if probability >= BEST_THRESHOLD else 0
-        
         return {
             "client_id": client_id,
             "probability": probability,
