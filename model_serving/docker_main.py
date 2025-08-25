@@ -97,7 +97,7 @@ def predict(client_id: str, data: ClientData):
         if missing_features:
             raise ValueError(f"Missing required features: {list(missing_features)}")
         input_df = input_df[EXPECTED_FEATURES]
-        probability = model.predict(input_df)[0][1]
+        probability = model.predict(input_df)[0]
         prediction = 1 if probability >= BEST_THRESHOLD else 0
         return {
             "client_id": client_id,
