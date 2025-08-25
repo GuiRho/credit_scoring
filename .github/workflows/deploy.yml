@@ -48,7 +48,7 @@ jobs:
       - name: Build UX Image
         run: |
           docker build -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/credit-scoring-ux:${{ github.sha }} \
-          -f ./ux/Dockerfile \
+          -f ./UX/Dockerfile \
           .
 
       - name: Push UX Image

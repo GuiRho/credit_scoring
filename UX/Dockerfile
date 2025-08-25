@@ -4,12 +4,12 @@ FROM python:3.12-slim
 # Set the working directory inside the container
 WORKDIR /app
 
-# COPY files from the build context (the project root) into the container
-COPY ux/requirements.txt ./requirements.txt
+# COPY files using the correct case-sensitive path
+COPY UX/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# COPY the app code from the project root into the container
-COPY ux/app.py .
+# COPY the app code using the correct case-sensitive path
+COPY UX/app.py .
 
 # Expose the port Cloud Run uses
 EXPOSE 8080
