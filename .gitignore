@@ -17,4 +17,6 @@ Thumbs.db
 
 # Data
 *.parquetgcp-credentials.json
+
+# Ignore GCP credentials file
 gcp-credentials.json
