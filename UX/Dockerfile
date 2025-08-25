@@ -5,11 +5,11 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Copy and install the Python dependencies
-COPY ux/requirements.txt ./requirements.txt
+COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy your UX application code into the container
-COPY ux/app.py .
+COPY app.py .
 
 # Expose the port Cloud Run uses
 EXPOSE 8080
