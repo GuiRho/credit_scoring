@@ -19,4 +19,4 @@ Thumbs.db
 *.parquetgcp-credentials.json
 
 # Ignore GCP credentials file
-gcp-credentials.json
+gcp-credentials.jsoncatboost_info/
