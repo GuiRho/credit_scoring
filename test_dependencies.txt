@@ -1,0 +1,49 @@
+This document outlines the file dependencies required for creating a comprehensive unit testing suite for the credit scoring project.
+
+### 1. Testing Model Scoring Validity
+
+**Objective:** Verify that the model consistently produces the correct scores for known inputs.
+
+*   **Test Scripts:**
+    *   `tests/test_model_scoring.py` (to be created)
+    *   `run_tests.py` (the test runner)
+
+*   **Files Under Test:**
+    *   `production_model/model.pkl`: The serialized model artifact. The tests will load this model to perform predictions.
+    *   `package_model.py`: The script responsible for packaging the model. Its logic is implicitly tested by validating the final artifact.
+
+*   **Dependencies & Test Data:**
+    *   `model_building/preprocess.py` & `model_building/process.py`: Understanding the feature engineering and preprocessing steps is crucial to create valid test inputs.
+    *   `production_model/input_example.json`: Provides the schema for creating test case inputs.
+    *   `tests/conftest.py`: To define fixtures, such as loading the model once for all tests.
+
+### 2. Testing Dashboard and API Functionality
+
+**Objective:** Ensure the dashboard's API integration is working correctly and the UI displays expected results.
+
+*   **Test Scripts:**
+    *   `tests/test_dashboard_api.py` (to be created)
+
+*   **Files Under Test:**
+    *   `UX/app.py`: The main dashboard application. Tests will simulate client requests to its endpoints.
+    *   `model_serving/main.py`: The model's API. Tests will call its prediction endpoints directly.
+
+*   **Dependencies & Configuration:**
+    *   `UX/requirements.txt`: Contains dependencies (e.g., Flask, Dash, requests) needed to run the dashboard and the tests.
+    *   `model_serving/requirements.txt`: Contains dependencies (e.g., FastAPI, uvicorn) for the model API.
+    *   `production_model/model.pkl`: The API depends on this file to make predictions.
+    *   `production_model/serving_input_example.json`: Used as a payload for testing the API endpoint.
+
+### 3. Testing Robustness and Error Handling
+
+**Objective:** Verify that the application gracefully handles invalid, unexpected, or erroneous inputs.
+
+*   **Test Scripts:**
+    *   `tests/test_robustness.py` (to be created). These tests could also be integrated into the other test files.
+
+*   **Files Under Test:**
+    *   `model_serving/main.py`: The API should return appropriate error codes (e.g., 400, 422) when receiving malformed or incomplete data.
+    *   `UX/app.py`: The dashboard should display user-friendly error messages when the API fails or returns an error.
+
+*   **Dependencies & Test Data:**
+    *   `production_model/input_example.json`: This file will be used as a basis to generate malformed/invalid data for testing (e.g., missing keys, incorrect data types, empty values).
