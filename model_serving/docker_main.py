@@ -98,9 +98,7 @@ def predict(client_id: str, data: ClientData):
             raise ValueError(f"Missing required features: {list(missing_features)}")
         input_df = input_df[EXPECTED_FEATURES]
         # The model returns probabilities for class 0 and 1, we need the probability for class 1 (default)
-        # The model returns probabilities for class 0 and 1, we need the probability for class 1 (default)
-        probability = model.predict_proba(input_df)[0][1]
-        prediction = 1 if probability >= BEST_THRESHOLD else 0
+        probability = model._model_impl.predict_proba(input_df)[0][1]
         prediction = 1 if probability >= BEST_THRESHOLD else 0
         return {
             "client_id": client_id,
