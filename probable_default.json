@@ -1,7 +1,6 @@
 
 {
-  "features": {
-    "AMT_ANNUITY": 45000.0,
+    "AMT_ANNUITY": 20000.0,
     "ANNUITY_INCOME_PERC": 0.8,
     "APPROVED_APP_CREDIT_PERC_MAX": 0.5,
     "BURO_AMT_CREDIT_SUM_DEBT_SUM": 500000.0,
@@ -43,5 +42,4 @@
     "BURO_DAYS_CREDIT_MEAN_pow0_5": 10.0,
     "DAYS_BIRTH_pow2": 64000000.0,
     "SK_ID_CURR_pow2": 1.0
-  }
 }
