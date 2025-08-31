@@ -1,5 +1,7 @@
 # Credit Scoring Project
 
+GitHub :https://github.com/GuiRho/credit_scoring
+
 ## Project Goal
 This project aims to develop, deploy, and monitor a credit scoring model. It encompasses the entire machine learning lifecycle, from data ingestion and model building to API serving, data drift analysis, and a user-facing dashboard.
 
