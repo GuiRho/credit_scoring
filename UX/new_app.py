@@ -73,28 +73,26 @@ def get_shap_explainer(_model, _expected_features):
 
 # --- Data and Model Loading ---
 model = load_model()
-demo_data = load_demo_data()
 analysis_data = load_analysis_data()
 global_importance_df = load_global_importance() # Load global importance
-EXPECTED_FEATURES = list(demo_data.columns)
+EXPECTED_FEATURES = list(analysis_data.drop(columns=['TARGET']).columns)
 explainer = get_shap_explainer(model, EXPECTED_FEATURES)
 
 # --- UI: Sidebar for Inputs ---
 st.sidebar.title("Client & Feature Controls")
 st.sidebar.markdown("---")
 
-# --- MODIFIED: Allow selecting ALL clients from the demo file ---
-# The min(5, ...) limit has been removed.
+# --- MODIFIED: Allow selecting ALL clients from the analysis file ---
 KNOWN_CLIENTS = {
-    f"Client_ID_{demo_data.index[i]}": demo_data.iloc[i].to_dict()
-    for i in range(len(demo_data))
+    f"Client_ID_{analysis_data.index[i]}": analysis_data.iloc[i].to_dict()
+    for i in range(len(analysis_data))
 }
 client_id = st.sidebar.selectbox("Select a Known Client (for Demo)", [""] + list(KNOWN_CLIENTS.keys()))
 
 if client_id:
     prefill_data = KNOWN_CLIENTS[client_id]
 else:
-    prefill_data = demo_data.median().to_dict()
+    prefill_data = analysis_data.drop(columns=['TARGET']).median().to_dict()
 
 st.sidebar.header("Client Feature Input")
 # --- Replacement for the feature input logic in the sidebar ---
@@ -112,7 +110,7 @@ with st.sidebar.expander("Adjust Client Features", expanded=True):
             max_val = series.max()
             dtype = series.dtype
         else: # Fallback to demo_data if feature is missing from analysis_data
-            series = demo_data[feature]
+            series = analysis_data[feature] # This should not happen anymore
             min_val = series.min()
             max_val = series.max()
             dtype = series.dtype
