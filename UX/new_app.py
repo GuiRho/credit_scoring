@@ -52,17 +52,25 @@ def load_global_importance():
         st.error(f"FATAL: Global importance file not found at '{GLOBAL_IMPORTANCE_PATH}'. Please run analysis.py first.")
         return pd.DataFrame(columns=['feature', 'importance'])
 
+# --- NEW, RECOMMENDED FUNCTION (assuming a tree-based model) ---
 @st.cache_resource
 def get_shap_explainer(_model, _expected_features):
-    # Drop the 'TARGET' column if it exists in the background data
+    # For TreeExplainer, we can pass the model directly.
+    # It's much faster and doesn't require a wrapper.
+    # The background data is optional but recommended for feature perturbation expectations.
     background_data = load_analysis_data().head(100)
     if 'TARGET' in background_data.columns:
         background_data = background_data.drop(columns=['TARGET'])
-
-    def predict_proba_wrapper(numpy_array):
-        df = pd.DataFrame(numpy_array, columns=_expected_features)
-        return _model.predict_proba(df)
-    return shap.KernelExplainer(predict_proba_wrapper, background_data)
+        
+    # The `model` from mlflow.sklearn is often a pipeline. We need the actual model step.
+    # Common step names are 'model', 'classifier', or 'regressor'. Check your training script.
+    # If it's not a pipeline, you can just use `_model`.
+    if hasattr(_model, 'steps'):
+        model_step = _model.steps[-1][1] 
+    else:
+        model_step = _model
+        
+    return shap.TreeExplainer(model_step, background_data)
 
 # --- Data and Model Loading ---
 model = load_model()
@@ -92,59 +100,71 @@ else:
 st.sidebar.header("Client Feature Input")
 with st.sidebar.expander("Adjust Client Features", expanded=True):
     client_data = {}
-    for feature in EXPECTED_FEATURES:
-        # Use analysis_data for range calculation to cover the full domain
-        if feature in analysis_data.columns:
-            min_val = analysis_data[feature].min()
-            max_val = analysis_data[feature].max()
-        else: # Fallback to demo_data if column not in analysis_data
-            min_val = demo_data[feature].min()
-            max_val = demo_data[feature].max()
+    # --- Replacement for the feature input logic in the sidebar ---
 
-        default_val = prefill_data.get(feature, demo_data[feature].median())
+for feature in EXPECTED_FEATURES:
+    # Use analysis_data for range calculation to cover the full domain
+    if feature in analysis_data.columns:
+        min_val = analysis_data[feature].min()
+        max_val = analysis_data[feature].max()
+    else: # Fallback to demo_data if column not in analysis_data
+        min_val = demo_data[feature].min()
+        max_val = demo_data[feature].max()
 
-        # Use number_input for float types to allow any value, and slider for integers
-        if pd.api.types.is_float_dtype(demo_data[feature]):
-            client_data[feature] = st.number_input(
-                feature, 
-                min_value=float(min_val), 
-                max_value=float(max_val), 
-                value=float(default_val), 
-                key=f"num_input_{feature}"
-            )
-        elif pd.api.types.is_integer_dtype(demo_data[feature]) and demo_data[feature].nunique() > 2:
-            client_data[feature] = st.slider(
-                feature, 
-                min_value=int(min_val), 
-                max_value=int(max_val), 
-                value=int(default_val), 
-                step=1, 
-                key=f"slider_{feature}"
-            )
-        else: # For binary/categorical-as-int or single value features
-            options = sorted(analysis_data[feature].unique())
-            try: # Handle case where default_val might not be in options
-                default_index = options.index(default_val)
-            except ValueError:
-                default_index = 0
-            client_data[feature] = st.selectbox(
-                feature, 
-                options, 
-                index=default_index, 
-                key=f"select_{feature}"
-            )
+    default_val = prefill_data.get(feature, demo_data[feature].median())
+    
+    # --- IMPROVED LOGIC ---
+    
+    # Use number_input for floats
+    if pd.api.types.is_float_dtype(demo_data[feature]):
+        client_data[feature] = st.number_input(
+            feature,
+            min_value=float(min_val),
+            max_value=float(max_val),
+            value=float(default_val),
+            key=f"num_input_{feature}"
+        )
+    # Use slider for integers with a small, manageable range
+    elif pd.api.types.is_integer_dtype(demo_data[feature]) and (max_val - min_val) < 100:
+        client_data[feature] = st.slider(
+            feature,
+            min_value=int(min_val),
+            max_value=int(max_val),
+            value=int(default_val),
+            step=1,
+            key=f"slider_{feature}"
+        )
+    # Use number_input for integers with a large range (more precise)
+    elif pd.api.types.is_integer_dtype(demo_data[feature]):
+         client_data[feature] = st.number_input(
+            feature,
+            min_value=int(min_val),
+            max_value=int(max_val),
+            value=int(default_val),
+            step=1,
+            key=f"num_input_{feature}"
+        )
+    # Use selectbox for categorical/binary features
+    else:
+        options = sorted(analysis_data[feature].unique())
+        try:
+            default_index = options.index(default_val)
+        except ValueError:
+            default_index = 0
+        client_data[feature] = st.selectbox(
+            feature,
+            options,
+            index=default_index,
+            key=f"select_{feature}"
+        )
 
 
 if st.sidebar.button("Analyze Client", type="primary", use_container_width=True):
     with st.spinner("Calculating prediction and feature contributions..."):
-        st.write("1. Creating input DataFrame...")
         input_df = pd.DataFrame([client_data], columns=EXPECTED_FEATURES)
-        st.write("2. Calling model.predict_proba...")
         st.session_state.prob = model.predict_proba(input_df)[0, 1]
-        st.write(f"3. Probability: {st.session_state.prob}")
-        st.write("4. Calling SHAP explainer...")
+        # Calculate SHAP explanation object
         shap_explanation = explainer(input_df)
-        st.write("5. SHAP explanation calculated.")
         
         # --- NEW: Create a new explanation object with rounded values for plotting ---
         # We target the positive class (index 1) for default prediction.
@@ -155,12 +175,10 @@ if st.sidebar.button("Analyze Client", type="primary", use_container_width=True)
             data=shap_explanation.data,
             feature_names=EXPECTED_FEATURES
         )
-        st.write("6. Rounded SHAP explanation created.")
         
         st.session_state.client_data_for_plots = client_data
         st.session_state.client_id_for_plots = client_id
         st.session_state.analysis_generated = True
-        st.write("7. Session state updated. Rerunning...")
 
 # --- UI: Main Panel for Results ---
 st.title("💳 Credit Scoring & Risk Analysis Dashboard")
