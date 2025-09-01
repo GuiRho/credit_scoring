@@ -98,65 +98,79 @@ else:
     prefill_data = demo_data.median().to_dict()
 
 st.sidebar.header("Client Feature Input")
+# --- Replacement for the feature input logic in the sidebar ---
+
 with st.sidebar.expander("Adjust Client Features", expanded=True):
     client_data = {}
-    # --- Replacement for the feature input logic in the sidebar ---
+    for feature in EXPECTED_FEATURES:
+        
+        # --- IMPROVED & ROBUST LOGIC ---
+        
+        # Step 1: Get feature properties consistently from the main analysis_data
+        if feature in analysis_data.columns:
+            series = analysis_data[feature]
+            min_val = series.min()
+            max_val = series.max()
+            dtype = series.dtype
+        else: # Fallback to demo_data if feature is missing from analysis_data
+            series = demo_data[feature]
+            min_val = series.min()
+            max_val = series.max()
+            dtype = series.dtype
 
-for feature in EXPECTED_FEATURES:
-    # Use analysis_data for range calculation to cover the full domain
-    if feature in analysis_data.columns:
-        min_val = analysis_data[feature].min()
-        max_val = analysis_data[feature].max()
-    else: # Fallback to demo_data if column not in analysis_data
-        min_val = demo_data[feature].min()
-        max_val = demo_data[feature].max()
+        default_val = prefill_data.get(feature, series.median())
 
-    default_val = prefill_data.get(feature, demo_data[feature].median())
-    
-    # --- IMPROVED LOGIC ---
-    
-    # Use number_input for floats
-    if pd.api.types.is_float_dtype(demo_data[feature]):
-        client_data[feature] = st.number_input(
-            feature,
-            min_value=float(min_val),
-            max_value=float(max_val),
-            value=float(default_val),
-            key=f"num_input_{feature}"
-        )
-    # Use slider for integers with a small, manageable range
-    elif pd.api.types.is_integer_dtype(demo_data[feature]) and (max_val - min_val) < 100:
-        client_data[feature] = st.slider(
-            feature,
-            min_value=int(min_val),
-            max_value=int(max_val),
-            value=int(default_val),
-            step=1,
-            key=f"slider_{feature}"
-        )
-    # Use number_input for integers with a large range (more precise)
-    elif pd.api.types.is_integer_dtype(demo_data[feature]):
-         client_data[feature] = st.number_input(
-            feature,
-            min_value=int(min_val),
-            max_value=int(max_val),
-            value=int(default_val),
-            step=1,
-            key=f"num_input_{feature}"
-        )
-    # Use selectbox for categorical/binary features
-    else:
-        options = sorted(analysis_data[feature].unique())
-        try:
-            default_index = options.index(default_val)
-        except ValueError:
-            default_index = 0
-        client_data[feature] = st.selectbox(
-            feature,
-            options,
-            index=default_index,
-            key=f"select_{feature}"
-        )
+        # Step 2: FIX - Handle constant features to prevent the slider error
+        if min_val == max_val:
+            # Display the value as non-editable text and add it to the client data
+            st.text_input(f"{feature} (Constant)", value=default_val, disabled=True)
+            client_data[feature] = default_val 
+            continue # Skip to the next feature in the loop
+
+        # Step 3: Choose the best UI element based on data type and range
+        
+        # Use number_input for floats
+        if pd.api.types.is_float_dtype(dtype):
+            client_data[feature] = st.number_input(
+                feature,
+                min_value=float(min_val),
+                max_value=float(max_val),
+                value=float(default_val),
+                key=f"num_input_{feature}"
+            )
+        # Use slider ONLY for integers with a small, manageable range
+        elif pd.api.types.is_integer_dtype(dtype) and (max_val - min_val) < 100:
+            client_data[feature] = st.slider(
+                feature,
+                min_value=int(min_val),
+                max_value=int(max_val),
+                value=int(default_val),
+                step=1,
+                key=f"slider_{feature}"
+            )
+        # FIX - Use number_input for integers with a large range (solves consistency issue)
+        elif pd.api.types.is_integer_dtype(dtype):
+             client_data[feature] = st.number_input(
+                feature,
+                min_value=int(min_val),
+                max_value=int(max_val),
+                value=int(default_val),
+                step=1,
+                key=f"num_input_{feature}"
+            )
+        # Use selectbox for categorical features
+        else:
+            options = sorted(series.unique())
+            try:
+                default_index = options.index(default_val)
+            except (ValueError, IndexError):
+                default_index = 0
+            client_data[feature] = st.selectbox(
+                feature,
+                options,
+                index=default_index,
+                key=f"select_{feature}"
+            )
 
 
 if st.sidebar.button("Analyze Client", type="primary", use_container_width=True):
