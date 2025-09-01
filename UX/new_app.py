@@ -27,6 +27,7 @@ BEST_THRESHOLD = 0.13
 # --- Caching Functions for Performance ---
 @st.cache_resource
 def load_model():
+    """Loads the full MLflow pipeline model."""
     return mlflow.sklearn.load_model(MODEL_PATH)
 
 @st.cache_data
@@ -52,31 +53,14 @@ def load_global_importance():
         st.error(f"FATAL: Global importance file not found at '{GLOBAL_IMPORTANCE_PATH}'. Please run analysis.py first.")
         return pd.DataFrame(columns=['feature', 'importance'])
 
-# --- NEW, RECOMMENDED FUNCTION (assuming a tree-based model) ---
-@st.cache_resource
-def get_shap_explainer(_model, _expected_features):
-    """
-    Creates a SHAP TreeExplainer. This is much faster and more reliable
-    for tree-based models like LightGBM, XGBoost, etc.
-    """
-    # MLflow models are often pipelines. We need to extract the final model step.
-    # Common step names are 'model', 'classifier', or the model's class name.
-    # Check your model training script to confirm the step name.
-    if hasattr(_model, 'steps'):
-        model_step = _model.steps[-1][1] 
-    else: # If the model is not a pipeline
-        model_step = _model
-        
-    # TreeExplainer is initialized with the model itself.
-    # It does not need a prediction wrapper function.
-    return shap.TreeExplainer(model_step)
-
 # --- Data and Model Loading ---
-model = load_model()
+model = load_model() # This is the full pipeline
 analysis_data = load_analysis_data()
-global_importance_df = load_global_importance() # Load global importance
+global_importance_df = load_global_importance()
 EXPECTED_FEATURES = list(analysis_data.drop(columns=['TARGET']).columns)
-explainer = get_shap_explainer(model, EXPECTED_FEATURES)
+
+# --- FIX: We no longer need the old, incorrect get_shap_explainer function ---
+# The logic will be handled directly in the analysis section.
 
 # --- UI: Sidebar for Inputs ---
 st.sidebar.title("Client & Feature Controls")
@@ -153,18 +137,33 @@ with st.sidebar.expander("Adjust Client Features", expanded=True):
 if st.sidebar.button("Analyze Client", type="primary", use_container_width=True):
     with st.spinner("Calculating prediction and feature contributions..."):
         input_df = pd.DataFrame([client_data], columns=EXPECTED_FEATURES)
+
+        # --- FIX: THE NEW, CORRECT EXPLANATION LOGIC ---
+
+        # 1. Get the "ground truth" prediction using the full pipeline. This is our target.
         st.session_state.prob = model.predict_proba(input_df)[0, 1]
-        # Calculate SHAP explanation object
-        shap_explanation = explainer(input_df)
+
+        # 2. Separate the pipeline into its two core components.
+        preprocessor = model.steps[0][1]
+        classifier = model.steps[1][1]
+
+        # 3. Explicitly preprocess the client's input data.
+        processed_input_df = preprocessor.transform(input_df)
         
-        # --- NEW: Create a new explanation object with rounded values for plotting ---
-        # We target the positive class (index 1) for default prediction.
-        rounded_values = np.round(shap_explanation.values[:, :, 1], 2)
-        st.session_state.shap_explanation_rounded = shap.Explanation(
-            values=rounded_values,
-            base_values=shap_explanation.base_values[:, 1],
-            data=shap_explanation.data,
-            feature_names=EXPECTED_FEATURES
+        # 4. Initialize the explainer with ONLY the classifier.
+        explainer = shap.TreeExplainer(classifier)
+
+        # 5. Generate SHAP values using the explainer on the PROCESSED data.
+        #    The output of shap.Explanation is what we need. We'll get the values for the positive class (index 1).
+        shap_explanation_object = explainer(processed_input_df)
+        
+        # We need to create a new explanation object for just the positive class (default)
+        # to pass to the waterfall plot.
+        st.session_state.shap_explanation_for_plot = shap.Explanation(
+            values=shap_explanation_object.values[:, :, 1],
+            base_values=shap_explanation_object.base_values[:, 1],
+            data=shap_explanation_object.data,
+            feature_names=preprocessor.get_feature_names_out(input_features=input_df.columns)
         )
         
         st.session_state.client_data_for_plots = client_data
@@ -178,8 +177,8 @@ st.markdown("---")
 
 if st.session_state.get("analysis_generated", False):
     prob = st.session_state.prob
-    # Use the rounded explanation for plotting
-    shap_explanation_rounded = st.session_state.shap_explanation_rounded
+    # Use the new, correct explanation object for plotting
+    shap_explanation_for_plot = st.session_state.shap_explanation_for_plot
     client_data_for_plots = st.session_state.client_data_for_plots
     client_id_for_plots = st.session_state.client_id_for_plots
     prediction = 1 if prob >= BEST_THRESHOLD else 0
@@ -200,21 +199,20 @@ if st.session_state.get("analysis_generated", False):
     # --- MODIFIED: Use tabs for local and global importance ---
     tab1, tab2 = st.tabs(["Local Importance (This Client)", "Global Importance (All Clients)"])
 
-    # --- FINAL Replacement for the "tab1" (Local Importance) plotting logic ---
-
     with tab1:
         st.markdown("This plot shows how each feature pushed the prediction for **this specific client** from the average score to its final value. Red bars increase risk, blue bars decrease it.")
 
         try:
-            explanation = shap_explanation_rounded[0]
+            # We now use our correctly generated explanation object
+            explanation = shap_explanation_for_plot[0]
             
-            # --- IMPROVED DATA PREPARATION ---
-            
-            # 1. Extract data and create a DataFrame for easy manipulation
+            # --- The data preparation for Plotly can now be simplified ---
             shap_values = explanation.values
             base_value = explanation.base_values
-            features = np.array(explanation.feature_names)
             
+            # Use the feature names from the explanation object itself
+            features = np.array(explanation.feature_names)
+
             feature_impacts = pd.DataFrame(
                 {'feature': features, 'shap_value': shap_values}
             )
@@ -230,10 +228,7 @@ if st.session_state.get("analysis_generated", False):
             if not other_features.empty:
                 other_shap_sum = other_features['shap_value'].sum()
                 # Append the 'Other Features' contribution to the top features DataFrame
-                other_row = pd.DataFrame([{
-                    'feature': f'{len(other_features)} Other Features',
-                    'shap_value': other_shap_sum
-                }])
+                other_row = pd.DataFrame([{'feature': f'{len(other_features)} Other Features', 'shap_value': other_shap_sum}])
                 top_features = pd.concat([top_features, other_row], ignore_index=True)
 
             # Sort the bars for a cleaner visual flow (optional, but good practice)
@@ -242,7 +237,10 @@ if st.session_state.get("analysis_generated", False):
             # 4. Prepare final data lists for Plotly
             y_values = top_features['shap_value'].tolist()
             x_labels = top_features['feature'].tolist()
-            final_prediction = st.session_state.prob # Use the model's actual prediction
+            
+            # IMPORTANT: Ensure the final bar's value is derived from the SHAP sum
+            # Forcing it to `st.session_state.prob` is also fine now, as they should be nearly identical.
+            final_prediction_from_shap = base_value + np.sum(shap_values)
 
             # 5. Create the Plotly figure with the corrected data
             fig = go.Figure(go.Waterfall(
@@ -250,8 +248,8 @@ if st.session_state.get("analysis_generated", False):
                 orientation="v",
                 measure=["absolute"] + ["relative"] * len(y_values) + ["total"],
                 x=["Average Prediction"] + x_labels + ["Final Prediction"],
-                y=[base_value] + y_values + [final_prediction],
-                text=[f"{v:.3f}" for v in [base_value] + y_values + [final_prediction]],
+                y=[base_value] + y_values + [final_prediction_from_shap],
+                text=[f"{v:.3f}" for v in [base_value] + y_values + [final_prediction_from_shap]],
                 textposition="outside",
                 connector={"line": {"color": "rgb(63, 63, 63)"}},
                 increasing={"marker": {"color": "#d62728"}}, # Red for increasing risk
