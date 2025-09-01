@@ -137,10 +137,14 @@ with st.sidebar.expander("Adjust Client Features", expanded=True):
 
 if st.sidebar.button("Analyze Client", type="primary", use_container_width=True):
     with st.spinner("Calculating prediction and feature contributions..."):
+        st.write("1. Creating input DataFrame...")
         input_df = pd.DataFrame([client_data], columns=EXPECTED_FEATURES)
+        st.write("2. Calling model.predict_proba...")
         st.session_state.prob = model.predict_proba(input_df)[0, 1]
-        # Calculate SHAP explanation object
+        st.write(f"3. Probability: {st.session_state.prob}")
+        st.write("4. Calling SHAP explainer...")
         shap_explanation = explainer(input_df)
+        st.write("5. SHAP explanation calculated.")
         
         # --- NEW: Create a new explanation object with rounded values for plotting ---
         # We target the positive class (index 1) for default prediction.
@@ -151,10 +155,12 @@ if st.sidebar.button("Analyze Client", type="primary", use_container_width=True)
             data=shap_explanation.data,
             feature_names=EXPECTED_FEATURES
         )
+        st.write("6. Rounded SHAP explanation created.")
         
         st.session_state.client_data_for_plots = client_data
         st.session_state.client_id_for_plots = client_id
         st.session_state.analysis_generated = True
+        st.write("7. Session state updated. Rerunning...")
 
 # --- UI: Main Panel for Results ---
 st.title("💳 Credit Scoring & Risk Analysis Dashboard")
