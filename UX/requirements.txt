@@ -1,3 +1,8 @@
 streamlit
 pandas
-requests
+numpy
+shap
+matplotlib
+mlflow
+plotly
+scikit-learn
