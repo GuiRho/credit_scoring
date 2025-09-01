@@ -285,7 +285,8 @@ if st.session_state.get("analysis_generated", False):
                 text='importance' # Show values on bars
             )
             fig.update_traces(texttemplate='%{text:.2f}', textposition='outside')
-            fig.update_layout(yaxis={'categoryorder':'total ascending'})
+            fig.update_layout(yaxis={'categoryorder':'total ascending'},
+                              height=700) # force to 700 to read 20 feature names
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning("Global importance data is not available.")
