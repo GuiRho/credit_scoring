@@ -55,22 +55,21 @@ def load_global_importance():
 # --- NEW, RECOMMENDED FUNCTION (assuming a tree-based model) ---
 @st.cache_resource
 def get_shap_explainer(_model, _expected_features):
-    # For TreeExplainer, we can pass the model directly.
-    # It's much faster and doesn't require a wrapper.
-    # The background data is optional but recommended for feature perturbation expectations.
-    background_data = load_analysis_data().head(100)
-    if 'TARGET' in background_data.columns:
-        background_data = background_data.drop(columns=['TARGET'])
-        
-    # The `model` from mlflow.sklearn is often a pipeline. We need the actual model step.
-    # Common step names are 'model', 'classifier', or 'regressor'. Check your training script.
-    # If it's not a pipeline, you can just use `_model`.
+    """
+    Creates a SHAP TreeExplainer. This is much faster and more reliable
+    for tree-based models like LightGBM, XGBoost, etc.
+    """
+    # MLflow models are often pipelines. We need to extract the final model step.
+    # Common step names are 'model', 'classifier', or the model's class name.
+    # Check your model training script to confirm the step name.
     if hasattr(_model, 'steps'):
         model_step = _model.steps[-1][1] 
-    else:
+    else: # If the model is not a pipeline
         model_step = _model
         
-    return shap.TreeExplainer(model_step, background_data)
+    # TreeExplainer is initialized with the model itself.
+    # It does not need a prediction wrapper function.
+    return shap.TreeExplainer(model_step)
 
 # --- Data and Model Loading ---
 model = load_model()
@@ -129,47 +128,27 @@ with st.sidebar.expander("Adjust Client Features", expanded=True):
 
         # Step 3: Choose the best UI element based on data type and range
         
-        # Use number_input for floats
-        if pd.api.types.is_float_dtype(dtype):
-            client_data[feature] = st.number_input(
+        # Use slider for all numerical features (floats and integers)
+        if pd.api.types.is_numeric_dtype(dtype):
+            client_data[feature] = st.slider(
                 feature,
                 min_value=float(min_val),
                 max_value=float(max_val),
                 value=float(default_val),
-                key=f"num_input_{feature}"
-            )
-        # Use slider ONLY for integers with a small, manageable range
-        elif pd.api.types.is_integer_dtype(dtype) and (max_val - min_val) < 100:
-            client_data[feature] = st.slider(
-                feature,
-                min_value=int(min_val),
-                max_value=int(max_val),
-                value=int(default_val),
-                step=1,
                 key=f"slider_{feature}"
             )
-        # FIX - Use number_input for integers with a large range (solves consistency issue)
-        elif pd.api.types.is_integer_dtype(dtype):
-             client_data[feature] = st.number_input(
-                feature,
-                min_value=int(min_val),
-                max_value=int(max_val),
-                value=int(default_val),
-                step=1,
-                key=f"num_input_{feature}"
-            )
-        # Use selectbox for categorical features
+        # Use radio buttons for categorical features
         else:
             options = sorted(series.unique())
             try:
                 default_index = options.index(default_val)
             except (ValueError, IndexError):
                 default_index = 0
-            client_data[feature] = st.selectbox(
+            client_data[feature] = st.radio(
                 feature,
                 options,
                 index=default_index,
-                key=f"select_{feature}"
+                key=f"radio_{feature}"
             )
 
 
@@ -223,13 +202,79 @@ if st.session_state.get("analysis_generated", False):
     # --- MODIFIED: Use tabs for local and global importance ---
     tab1, tab2 = st.tabs(["Local Importance (This Client)", "Global Importance (All Clients)"])
 
+    # --- FINAL Replacement for the "tab1" (Local Importance) plotting logic ---
+
     with tab1:
         st.markdown("This plot shows how each feature pushed the prediction for **this specific client** from the average score to its final value. Red bars increase risk, blue bars decrease it.")
-        fig, ax = plt.subplots()
-        # Use the pre-rounded explanation object for the plot
-        shap.plots.waterfall(shap_explanation_rounded[0], max_display=15, show=False)
-        st.pyplot(fig, bbox_inches='tight')
-        plt.close(fig)
+
+        try:
+            explanation = shap_explanation_rounded[0]
+            
+            # --- IMPROVED DATA PREPARATION ---
+            
+            # 1. Extract data and create a DataFrame for easy manipulation
+            shap_values = explanation.values
+            base_value = explanation.base_values
+            features = np.array(explanation.feature_names)
+            
+            feature_impacts = pd.DataFrame(
+                {'feature': features, 'shap_value': shap_values}
+            )
+            feature_impacts['abs_shap'] = feature_impacts['shap_value'].abs()
+            feature_impacts = feature_impacts.sort_values(by='abs_shap', ascending=False)
+
+            # 2. Separate the top N features from the rest
+            N = 7
+            top_features = feature_impacts.head(N)
+            other_features = feature_impacts.iloc[N:]
+
+            # 3. FIX: Calculate the sum of the remaining features' impact
+            if not other_features.empty:
+                other_shap_sum = other_features['shap_value'].sum()
+                # Append the 'Other Features' contribution to the top features DataFrame
+                other_row = pd.DataFrame([{
+                    'feature': f'{len(other_features)} Other Features',
+                    'shap_value': other_shap_sum
+                }])
+                top_features = pd.concat([top_features, other_row], ignore_index=True)
+
+            # Sort the bars for a cleaner visual flow (optional, but good practice)
+            top_features = top_features.sort_values(by='shap_value', ascending=False)
+
+            # 4. Prepare final data lists for Plotly
+            y_values = top_features['shap_value'].tolist()
+            x_labels = top_features['feature'].tolist()
+            final_prediction = st.session_state.prob # Use the model's actual prediction
+
+            # 5. Create the Plotly figure with the corrected data
+            fig = go.Figure(go.Waterfall(
+                name="Prediction",
+                orientation="v",
+                measure=["absolute"] + ["relative"] * len(y_values) + ["total"],
+                x=["Average Prediction"] + x_labels + ["Final Prediction"],
+                y=[base_value] + y_values + [final_prediction],
+                text=[f"{v:.3f}" for v in [base_value] + y_values + [final_prediction]],
+                textposition="outside",
+                connector={"line": {"color": "rgb(63, 63, 63)"}},
+                increasing={"marker": {"color": "#d62728"}}, # Red for increasing risk
+                decreasing={"marker": {"color": "#1f77b4"}}, # Blue for decreasing risk
+                totals={"marker": {"color": "#2ca02c"}}     # Green for totals
+            ))
+
+            fig.update_layout(
+                title="Local Feature Contribution to Prediction",
+                showlegend=False,
+                height=600,
+                yaxis_title="Probability Impact"
+            )
+            # Rotate x-axis labels to prevent them from overlapping
+            fig.update_xaxes(tickangle=-45)
+
+            st.plotly_chart(fig, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"An error occurred while generating the SHAP plot: {e}")
+            st.exception(e) # This will print the full traceback for debugging
 
     with tab2:
         st.markdown("This plot shows the most influential features **across all clients**. It is based on the average impact (mean absolute SHAP value) each feature has on the prediction.")
