@@ -17,6 +17,9 @@ RUN pip install --no-cache-dir -r model_analysis_requirements.txt
 COPY UX/requirements.txt ./ux_requirements.txt
 RUN pip install --no-cache-dir -r ux_requirements.txt
 
+# Install setuptools to fix the pkg_resources error
+RUN pip install --no-cache-dir setuptools
+
 # Run the analysis script to generate data for the dashboard
 RUN python model_analysis/new_analysis.py
 
