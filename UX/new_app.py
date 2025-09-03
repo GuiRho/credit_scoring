@@ -324,4 +324,4 @@ else:
 
 # --- Sidebar Footer ---
 st.sidebar.markdown("---")
-st.sidebar.info("This app runs in offline mode, using a local copy of the production model for analysis.")
+st.sidebar.info("Credit scoring model v1.0. Developed by prêt à dépenser.")
