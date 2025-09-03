@@ -239,14 +239,13 @@ if st.session_state.analysis_generated:
             
         fig = px.histogram(
             plot_data, x=feature_to_plot, title=f"Distribution of {feature_to_plot}",
-            color=color_arg_uni, color_discrete_map={'0': 'green', '1': 'red'}
+            color=color_arg_uni, color_discrete_map={'0': 'blue', '1': 'red'}
         )
         client_value = client_data_for_plots.get(feature_to_plot)
         fig.add_vline(x=client_value, line_width=3, line_dash="dash", line_color="yellow", annotation_text="Current Client", annotation_position="top right")
         st.plotly_chart(fig, use_container_width=True)
 
     # --- FINAL CORRECTED BLOCK (v5 - HANDLES ALL FILTER SCENARIOS) ---
-    # J'ai tout essayé pour les points clair du scatterplot. 
     with tab4:
         st.subheader("How does this client compare on two features?")
         
@@ -262,8 +261,8 @@ if st.session_state.analysis_generated:
         if target_filter_bi != "All":
             plot_data_bi = plot_data_bi[plot_data_bi['TARGET'] == int(target_filter_bi)]
 
-        x_is_cat = analysis_data[x_feature].nunique() < 20
-        y_is_cat = analysis_data[y_feature].nunique() < 20
+        x_is_cat = analysis_data[x_feature].nunique() < 10
+        y_is_cat = analysis_data[y_feature].nunique() < 10
         
         fig = None
 
@@ -276,7 +275,7 @@ if st.session_state.analysis_generated:
             if target_filter_bi == "All":
                 plot_data_bi['Status'] = plot_data_bi['TARGET'].map({0: 'No Default', 1: 'Default'})
                 color_arg_box = 'Status'
-                color_map_box = {'No Default': 'green', 'Default': 'red'}
+                color_map_box = {'No Default': 'blue', 'Default': 'red'}
             
             fig = px.box(plot_data_bi, x=x_feature, y=y_feature, color=color_arg_box, 
                         title=f"Distribution of {y_feature} by {x_feature}",
@@ -290,15 +289,15 @@ if st.session_state.analysis_generated:
                 df_0 = plot_data_bi[plot_data_bi['TARGET'] == 0]
                 df_1 = plot_data_bi[plot_data_bi['TARGET'] == 1]
                 
-                fig.add_trace(go.Scatter(x=df_0[x_feature], y=df_0[y_feature], mode='markers', marker=dict(color='green'), name='No Default (0)'))
+                fig.add_trace(go.Scatter(x=df_0[x_feature], y=df_0[y_feature], mode='markers', marker=dict(color='blue'), name='No Default (0)'))
                 fig.add_trace(go.Scatter(x=df_1[x_feature], y=df_1[y_feature], mode='markers', marker=dict(color='red'), name='Default (1)'))
                 
                 fig.update_layout(title=f"{x_feature} vs. {y_feature}", xaxis_title=x_feature, yaxis_title=y_feature, legend_title_text='Client Status')
             
-            # SCATTER: Filtered for Target 0 -> Make all points GREEN
+            # SCATTER: Filtered for Target 0 -> Make all points BLUE
             elif target_filter_bi == 0:
                 fig = px.scatter(plot_data_bi, x=x_feature, y=y_feature, title=f"{x_feature} vs. {y_feature} (No Default)")
-                fig.update_traces(marker=dict(color='green', size=7))
+                fig.update_traces(marker=dict(color='blue', size=7))
                 
             # SCATTER: Filtered for Target 1 -> Make all points RED
             elif target_filter_bi == 1:
