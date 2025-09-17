@@ -1,6 +1,6 @@
 pandas==2.2.2
 scikit-learn==1.7.1 #from 1.5.1 before
-mlflow==2.14.1
+mlflow==3.1.0
 shap==0.45.1
 matplotlib==3.9.1
 pyyaml==6.0.1
