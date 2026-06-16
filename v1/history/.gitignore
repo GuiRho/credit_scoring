@@ -1,11 +1,7 @@
 # Python
 __pycache__/
 *.pyc
-*.pyo
 *.log
-.pytest_cache/
-.coverage
-htmlcov/
 
 # MLflow
 mlruns/
@@ -16,21 +12,14 @@ mlflow_artifact/
 
 # IDE and OS
 .vscode/
-.idea/
 .DS_Store
 Thumbs.db
 
 # Data
-*.parquet
-*.pkl
+*.parquetgcp-credentials.json
 
-# Credentials
+# Ignore GCP credentials file
 gcp-credentials.json
 
-# CatBoost
+# ignore CatBoost learning info
 catboost_info/
-
-# Build artifacts
-*.egg-info/
-dist/
-build/

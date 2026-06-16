@@ -1,0 +1,10 @@
+{
+  "model_dir": "models/production_model",
+  "dataset_dir": "data/processed",
+  "output_dir": "output/analysis",
+  "sample_size": 500,
+  "top_n_features": 8,
+  "plot_dpi": 150,
+  "random_state": 42,
+  "drift_report_filename": "data_drift_report.html"
+}

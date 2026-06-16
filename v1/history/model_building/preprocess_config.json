@@ -1,0 +1,32 @@
+[
+  {
+    "run_name": "median_80_comp_1_outlier_0p01_cv",
+    "input_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\df\\df_global.parquet",
+    "output_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\preprocessed_median_80_comp_1_outlier_0p01_cv.parquet",
+    "completeness": 80,
+    "impute": "median",
+    "percent_outliers": 1,
+    "target_col": "TARGET",
+    "cv_threshold": 0.01
+  },
+  {
+    "run_name": "median_85_comp_0p5_outlier_0p05_cv",
+    "input_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\df\\df_global.parquet",
+    "output_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\preprocessed_median_85_comp_0p5_outlier_0p05_cv.parquet",
+    "completeness": 85,
+    "impute": "median",
+    "percent_outliers": 0.5,
+    "target_col": "TARGET",
+    "cv_threshold": 0.05
+  },
+  {
+    "run_name": "median_90_comp_0p2_outlier_0p1_cv",
+    "input_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\df\\df_global.parquet",
+    "output_parquet": "C:\\Users\\gui\\Documents\\OpenClassrooms\\Projet 7\\cache\\preprocessed_median_90_comp_0p2_outlier_0p1_cv.parquet",
+    "completeness": 90,
+    "impute": "median",
+    "percent_outliers": 0.2,
+    "target_col": "TARGET",
+    "cv_threshold": 0.1
+  }
+]

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "credit_scoring"
+version = "2.0.0"
+description = "Credit scoring ML pipeline — ingestion to serving"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "scikit-learn>=1.3",
+    "mlflow>=2.10",
+    "imbalanced-learn>=0.12",
+    "joblib>=1.3",
+    "pyarrow>=14.0",
+    "fastapi>=0.109",
+    "uvicorn>=0.25",
+    "pydantic>=2.0",
+    "streamlit>=1.30",
+    "shap>=0.44",
+    "matplotlib>=3.8",
+    "plotly>=5.18",
+]
+
+[project.optional-dependencies]
+tuning = ["optuna>=3.4", "xgboost>=2.0", "lightgbm>=4.0", "catboost>=1.2"]
+dev = ["pytest>=8.0", "pytest-cov>=4.1"]
+drift = ["evidently>=0.4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
