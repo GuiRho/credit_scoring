@@ -53,3 +53,7 @@ pytest tests/                 # Run tests
 7. `analysis.py` → SHAP analysis (optional, post-training)
 
 All steps log to MLflow. See `v1/history/README.md` for original documentation.
+
+## Future
+v3 - final version in preparation. 
+Re do the complete project from scratch, data ingestion to model serving.
