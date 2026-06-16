@@ -1,6 +1,0 @@
-fastapi
-uvicorn
-pandas
-mlflow
-pydantic
-PyYAML

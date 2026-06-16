@@ -1,8 +1,0 @@
-streamlit
-pandas
-numpy
-shap
-matplotlib
-mlflow
-plotly
-scikit-learn
